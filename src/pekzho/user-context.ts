@@ -14,7 +14,9 @@ export const userContextFor = (userId: string, name?: string): UserContext => ({
   today: localDate(),
   sayText: async (text: string) => {
     const wamid = await sendText(userId, text);
-    console.log(`📤 to=${userId} wamid=${wamid} text=${JSON.stringify(Array.from(text).slice(0, 120).join(''))}`);
+    // 🙈 sign-in links are bearer secrets (whoever holds one drives that Chrome) — keep them out of docker logs
+    const loggable = text.replace(/(\/attendance\/login\/)[\w-]+/g, '$1…');
+    console.log(`📤 to=${userId} wamid=${wamid} text=${JSON.stringify(Array.from(loggable).slice(0, 120).join(''))}`);
   },
   sayWithButtons: async (text: string, buttons: ReplyButton[]) => {
     const wamid = await sendButtons(userId, text, buttons);

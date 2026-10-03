@@ -59,6 +59,17 @@ const SCHEMA = `
   ALTER TABLE users ADD COLUMN IF NOT EXISTS welcomed_at timestamptz;
   -- 🔕 v3 (2026-10-03) — STOP opt-out for business-initiated reminders (free-form AND template)
   ALTER TABLE users ADD COLUMN IF NOT EXISTS reminders_opt_out boolean NOT NULL DEFAULT false;
+  -- 🕘 v4 (2026-10-04) — attendance skill: one Razorpay Payroll link per user.
+  --   browser_profile_id: their saved Browserbase profile (holds the Google login
+  --                       that lets pekzho sign in to Razorpay with no human)
+  --   linked_at:          NULL until their first sign-in through the link succeeds
+  CREATE TABLE IF NOT EXISTS attendance_accounts (
+    user_id            text PRIMARY KEY REFERENCES users(user_id) ON DELETE CASCADE,
+    browser_profile_id text NOT NULL,
+    linked_at          timestamptz,
+    last_punch_at      timestamptz,
+    created_at         timestamptz NOT NULL DEFAULT now()
+  );
   -- 🧹 anyone who already has a habit is, by definition, not new (backfills old rows)
   UPDATE users u SET is_user_new = false
    WHERE u.is_user_new AND EXISTS (SELECT 1 FROM habits h WHERE h.user_id = u.user_id);

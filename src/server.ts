@@ -6,6 +6,7 @@
 //   POST /webhook → inbound messages + status receipts. We ACK 200 fast, then
 //                   hand each message to pekzho (src/pekzho/agent.ts).
 //   GET  /healthz → liveness for docker / curl pokes.
+//   GET  /attendance/login/<token>[/view] → the attendance skill's one-time sign-in page
 //
 // Plain node:http, no framework. Node ≥22.18 runs these .ts files directly
 // (type stripping), so there's no build step either. 🪶
@@ -19,6 +20,7 @@ import { pekzhoHandle } from './pekzho/agent.ts';
 import { userContextFor } from './pekzho/user-context.ts';
 import { startScheduler } from './scheduler.ts';
 import type { InboundTurn } from './skills/types.ts';
+import { LOGIN_LINK_PATH, serveLoginLink } from './skills/attendance/login-link.ts';
 
 // ⚙️ Config — everything comes from env (see .env.example). Fail loud at boot
 // rather than silently 403-ing Meta at 3 AM.
@@ -176,6 +178,9 @@ const handleInboundEvent = async (req: IncomingMessage, res: ServerResponse) => 
 const server = createServer((req, res) => {
   const url = new URL(req.url ?? '/', 'http://localhost');
   if (url.pathname === '/healthz') return send(res, 200, 'ok');
+  // 🔗 the attendance skill's one-time Razorpay sign-in page (+ its poll endpoint)
+  const loginLink = req.method === 'GET' ? url.pathname.match(LOGIN_LINK_PATH) : null;
+  if (loginLink) return serveLoginLink(loginLink[1], Boolean(loginLink[2]), res);
   if (url.pathname === '/webhook' && req.method === 'GET')  return handleVerifyHandshake(url, res);
   if (url.pathname === '/webhook' && req.method === 'POST') {
     return void handleInboundEvent(req, res).catch((e) => {
