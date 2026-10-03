@@ -1,0 +1,26 @@
+{
+  "name": "pekzho-whatsapp",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Pekzho's own WhatsApp Cloud API agent (behind pk.pekzho.com/webhook)",
+  "type": "module",
+  "engines": {
+    "node": ">=22.18"
+  },
+  "scripts": {
+    "start": "node src/server.ts",
+    "dev": "node --watch --env-file=.env src/server.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "@types/pg": "^8.23.1",
+    "typescript": "^5.9.0"
+  },
+  "dependencies": {
+    "@earendil-works/pi-agent-core": "^1.0.0",
+    "@earendil-works/pi-ai": "^1.0.0",
+    "pg": "^8.23.1",
+    "typebox": "^1.3.27"
+  }
+}

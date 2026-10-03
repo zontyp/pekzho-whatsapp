@@ -1,0 +1,5 @@
+# 🚫 keep the build context tiny — the reference repos alone are hundreds of MB
+node_modules
+refrences
+.env
+.git
