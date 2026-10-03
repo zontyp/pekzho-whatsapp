@@ -46,12 +46,16 @@ const ACTION_WORDS: Record<AttendanceAction, { doing: string; done: string }> = 
 // 💬 Turn a run result into the one WhatsApp message the user sees.
 const describeResult = (r: AttendanceResult): string => {
   switch (r.outcome) {
-    case 'done':
-      return `${ACTION_WORDS[r.action].done} at *${r.time}* 🎉`;
+    case 'done': {
+      // 🔁 a repeat check-out moves the time on Razorpay — say what it replaced
+      const replaced = r.action === 'check-out' && r.status.checkedOutAt ? ` _(updated from ${friendlyTime(r.status.checkedOutAt)})_` : '';
+      return `${ACTION_WORDS[r.action].done} at *${r.time}* 🎉${replaced}`;
+    }
     case 'already':
-      return r.action === 'check-in'
-        ? `👍 You're already checked in today (at *${r.time}*). Send *check out* when you leave.`
-        : `👍 You already checked out today (at *${r.time}*).`;
+      // ☝️ only check-in can be "already" — Razorpay allows one check-in a day
+      return r.status.checkedOutAt
+        ? `👍 You already checked in (*${r.time}*) and out (*${friendlyTime(r.status.checkedOutAt)}*) today — Razorpay allows one check-in a day. Send *check out* again to update your check-out time.`
+        : `👍 You're already checked in today (at *${r.time}*). Send *check out* when you leave.`;
     case 'status': {
       const s = r.status;
       if (!s.checkedInAt) return '📋 Not checked in yet today. Send *check in* when you start.';

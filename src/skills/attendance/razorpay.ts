@@ -37,7 +37,7 @@ export interface TodayStatus {
 
 export type AttendanceResult =
   | { outcome: 'done'; action: 'check-in' | 'check-out'; time: string; status: TodayStatus }
-  | { outcome: 'already'; action: 'check-in' | 'check-out'; time: string; status: TodayStatus }
+  | { outcome: 'already'; action: 'check-in'; time: string; status: TodayStatus }   // only check-in — see the ☝️ below
   | { outcome: 'status'; status: TodayStatus }
   | { outcome: 'needs-login' }                       // Google wants a human again → send a login link
   | { outcome: 'refused'; reason: string };          // not allowed / page looked wrong → told the user why
@@ -133,8 +133,10 @@ export const runAttendance = async (browserProfileId: string, action: Attendance
     }
     if (action === 'status') return { outcome: 'status', status };
     if (!status.webCheckinAllowed) return { outcome: 'refused', reason: "your company hasn't enabled web check-in on Razorpay." };
+    // ☝️ Razorpay allows ONE check-in a day — but after a check-out it keeps
+    // showing "Check Out", and pressing it again just moves the check-out time
+    // (last one wins). So a repeat check-out is a normal click, not "already".
     if (action === 'check-in' && status.checkedInAt) return { outcome: 'already', action, time: friendlyTime(status.checkedInAt), status };
-    if (action === 'check-out' && status.checkedOutAt) return { outcome: 'already', action, time: friendlyTime(status.checkedOutAt), status };
     if (action === 'check-out' && !status.checkedInAt) return { outcome: 'refused', reason: "you haven't checked in today, so there's nothing to check out of." };
 
     // 👆 the click. Matched by visible text — the label carries a clock icon,
