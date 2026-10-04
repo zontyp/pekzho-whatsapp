@@ -391,7 +391,8 @@ const habitListParam = (names: string[], maxChars = 180): string => {
 const sendDailyReminders = async () => {
   const today = localDate();
   const { rows } = await db.query(
-    `SELECT u.user_id, u.display_name, (u.last_inbound_at > now() - interval '23 hours 50 minutes') AS in_window
+    `SELECT u.user_id, u.display_name, u.template_reminder_on,
+            (u.last_inbound_at > now() - interval '23 hours 50 minutes') AS in_window
      FROM users u
      WHERE EXISTS (SELECT 1 FROM habits h WHERE h.user_id = u.user_id)
        AND NOT u.reminders_opt_out
@@ -399,9 +400,14 @@ const sendDailyReminders = async () => {
        AND ($2::text IS NULL OR u.user_id LIKE $2 || '%')`, [today, DRY_RUN ? DRY_RUN_TEST_USER_PREFIX : null]);
   if (!rows.length) { console.log('⏰ daily habit reminders: nobody due'); return; }
 
+  // 💸 Outside the window = a PAID template — only for users the operator has
+  // switched on (users.template_reminder_on). Everyone else just waits until
+  // they message us again.
+  const wantsTemplate = (r: any) => !r.in_window && r.template_reminder_on;
+
   // ✅ Ask Meta once per run whether the template is usable yet (PENDING → skip).
   let templateReady = false;
-  if (rows.some((r: any) => !r.in_window)) {
+  if (rows.some(wantsTemplate)) {
     try {
       const status = await templateStatus(REMINDER_TEMPLATE, REMINDER_TEMPLATE_LANG);
       templateReady = status === 'APPROVED';
@@ -411,8 +417,9 @@ const sendDailyReminders = async () => {
     }
   }
 
-  let freeForm = 0, viaTemplate = 0, skipped = 0, failed = 0;
+  let freeForm = 0, viaTemplate = 0, skipped = 0, switchedOff = 0, failed = 0;
   for (const r of rows) {
+    if (!r.in_window && !r.template_reminder_on) { switchedOff++; continue; } // 💸 operator hasn't enabled paid reminders — don't stamp
     if (!r.in_window && !templateReady) { skipped++; continue; } // 💤 retry tomorrow, don't stamp
     // 📝 stamp first, so a crash mid-loop can't double-remind anyone
     await db.query('UPDATE users SET last_reminded_on = $2 WHERE user_id = $1', [r.user_id, today]);
@@ -434,7 +441,7 @@ const sendDailyReminders = async () => {
       console.error(`⏰ reminder to ${r.user_id} failed: ${e.message}`);
     }
   }
-  console.log(`⏰ daily habit reminders: free_form=${freeForm} template=${viaTemplate} skipped_template_not_ready=${skipped} failed=${failed}`);
+  console.log(`⏰ daily habit reminders: free_form=${freeForm} template=${viaTemplate} skipped_template_not_ready=${skipped} skipped_template_switched_off=${switchedOff} failed=${failed}`);
 };
 
 // 🔕 STOP / START for reminders (Meta requires an opt-out for business-initiated messages)

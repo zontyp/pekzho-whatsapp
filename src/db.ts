@@ -74,6 +74,13 @@ const SCHEMA = `
   --    must survive the user's first message, which would otherwise overwrite it
   --    with their WhatsApp profile name.
   ALTER TABLE users ADD COLUMN IF NOT EXISTS name_set_by_hand boolean NOT NULL DEFAULT false;
+  -- 💸 v6 (2026-10-05) — operator's per-user switch for the PAID template reminder.
+  --    Outside the 24h window a reminder can only go out as a marketing template
+  --    (~₹1 each), so it's opt-IN per user, flipped by hand in Postgres:
+  --      UPDATE users SET template_reminder_on = true  WHERE user_id = '91…';
+  --    Inside the window the free checklist goes out regardless of this switch.
+  --    ANY inbound message flips it back OFF (see touchUser) — re-enable by hand.
+  ALTER TABLE users ADD COLUMN IF NOT EXISTS template_reminder_on boolean NOT NULL DEFAULT false;
   -- 🧹 anyone who already has a habit is, by definition, not new (backfills old rows)
   UPDATE users u SET is_user_new = false
    WHERE u.is_user_new AND EXISTS (SELECT 1 FROM habits h WHERE h.user_id = u.user_id);
@@ -92,6 +99,9 @@ export const touchUser = async (userId: string, displayName: string | undefined)
      ON CONFLICT (user_id) DO UPDATE
        SET display_name = CASE WHEN users.name_set_by_hand THEN users.display_name   -- 🏷️ hand-set name wins
                                ELSE COALESCE(EXCLUDED.display_name, users.display_name) END,
+           -- 💸 they replied → the 24h window is open (free messages again), so the
+           --    paid template switch flips OFF; the operator re-enables it by hand
+           template_reminder_on = false,
            last_inbound_at = now()`,
     [userId, displayName ?? null],
   );
