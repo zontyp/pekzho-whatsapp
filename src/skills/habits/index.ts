@@ -17,7 +17,7 @@ import { Type, type TSchema } from 'typebox';
 import type { AgentTool } from '@earendil-works/pi-agent-core';
 import { db } from '../../db.ts';
 import { addDays, localDate } from '../../clock.ts';
-import { userContextFor } from '../../pekzho/user-context.ts';
+import { greetingName, userContextFor } from '../../pekzho/user-context.ts';
 import { DRY_RUN, DRY_RUN_TEST_USER_PREFIX, templateStatus } from '../../whatsapp.ts';
 import type { InboundTurn, Skill, UserContext } from '../types.ts';
 import * as store from './store.ts';
@@ -425,7 +425,7 @@ const sendDailyReminders = async () => {
       } else {
         // 📜 outside 24h → the template; a tap on it re-opens the window
         const names = (await store.listHabits(r.user_id)).map((h) => h.name);
-        const firstName = (r.display_name ?? '').trim().split(/\s+/)[0] || 'there';
+        const firstName = greetingName(r.display_name) ?? 'there';
         await user.sayTemplate(REMINDER_TEMPLATE, REMINDER_TEMPLATE_LANG, [firstName, habitListParam(names)], [PAYLOAD_CHECKLIST, PAYLOAD_STREAKS]);
         viaTemplate++;
       }

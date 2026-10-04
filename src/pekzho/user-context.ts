@@ -8,7 +8,16 @@ import { localDate } from '../clock.ts';
 import { sendButtons, sendTemplate, sendText, type ReplyButton } from '../whatsapp.ts';
 import type { UserContext } from '../skills/types.ts';
 
-export const userContextFor = (userId: string, name?: string): UserContext => ({
+// 👋 What to call someone in "Hi ___": their first name — but a leading title
+// keeps its name attached, so "Mr. Tejkumar Ahuja" → "Mr. Tejkumar", not "Mr.".
+const TITLES = /^(mr|mrs|ms|miss|dr|prof|shri|smt|sri|kumari)\.?$/i;
+export const greetingName = (fullName: string | null | undefined): string | undefined => {
+  const words = (fullName ?? '').trim().split(/\s+/).filter(Boolean);
+  if (!words.length) return undefined;
+  return TITLES.test(words[0]) && words[1] ? `${words[0]} ${words[1]}` : words[0];
+};
+
+export const userContextFor =(userId: string, name?: string): UserContext => ({
   userId,
   name,
   today: localDate(),

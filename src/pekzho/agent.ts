@@ -20,6 +20,7 @@ import { SKILLS } from '../skills/index.ts';
 import { downloadMedia } from '../whatsapp.ts';
 import { transcribeAudio, transcriptionEnabled } from '../transcribe.ts';
 import type { InboundTurn, UserContext } from '../skills/types.ts';
+import { greetingName } from './user-context.ts';
 
 // 🧠 Model wiring. DeepSeek's provider reads DEEPSEEK_API_KEY from env — the same
 // upstream key pektown-api's LLM proxy uses for HInstaBot / InstawebsBot.
@@ -69,7 +70,7 @@ const buildSystemPrompt = (user: UserContext, flags: UserFlags, firstContact: bo
 const GREETING = /^(?:hi+|hey+|hello+|helo|hii+|yo|hola|namaste|namaskar|good\s+(?:morning|afternoon|evening|night)|start|menu|help)[\s!.👋🙏]*$/i;
 
 const sendWelcome = async (user: UserContext) => {
-  const firstName = user.name?.split(/\s+/)[0];
+  const firstName = greetingName(user.name);
   const examples = SKILLS.flatMap((s) => s.welcome?.examples ?? []);
   await user.sayText([
     `👋 Hi${firstName ? ` ${firstName}` : ''}! I'm *pekzho*, your personal productivity AI assistant. Try:`,
@@ -209,7 +210,7 @@ const handleTurn = async (incoming: InboundTurn, user: UserContext) => {
   // code sends the one-line intro (deterministic — the LLM forgot it in testing),
   // then the turn carries on normally and actually answers them.
   if (firstContact) {
-    const firstName = user.name?.split(/\s+/)[0];
+    const firstName = greetingName(user.name);
     await user.sayText(`👋 Hi${firstName ? ` ${firstName}` : ''}! I'm *pekzho*, your personal productivity AI assistant.`);
     await markWelcomed(user.userId);
   }

@@ -70,6 +70,10 @@ const SCHEMA = `
     last_punch_at      timestamptz,
     created_at         timestamptz NOT NULL DEFAULT now()
   );
+  -- 🏷️ v5 (2026-10-04) — a name the operator typed in by hand ("Mr. Tejkumar Ahuja")
+  --    must survive the user's first message, which would otherwise overwrite it
+  --    with their WhatsApp profile name.
+  ALTER TABLE users ADD COLUMN IF NOT EXISTS name_set_by_hand boolean NOT NULL DEFAULT false;
   -- 🧹 anyone who already has a habit is, by definition, not new (backfills old rows)
   UPDATE users u SET is_user_new = false
    WHERE u.is_user_new AND EXISTS (SELECT 1 FROM habits h WHERE h.user_id = u.user_id);
@@ -86,7 +90,8 @@ export const touchUser = async (userId: string, displayName: string | undefined)
   await db.query(
     `INSERT INTO users (user_id, display_name, last_inbound_at) VALUES ($1, $2, now())
      ON CONFLICT (user_id) DO UPDATE
-       SET display_name = COALESCE(EXCLUDED.display_name, users.display_name),
+       SET display_name = CASE WHEN users.name_set_by_hand THEN users.display_name   -- 🏷️ hand-set name wins
+                               ELSE COALESCE(EXCLUDED.display_name, users.display_name) END,
            last_inbound_at = now()`,
     [userId, displayName ?? null],
   );
