@@ -111,18 +111,37 @@ export const runAttendance = async (browserProfileId: string, action: Attendance
 
     // 👂 Remember the page's own "today" answer — the freshest one wins.
     let todayBody: any = null;
+    let todayRejected = false; // 🔒 401/403 on /today = Razorpay's ~4h session is gone
     page.on('response', async (res) => {
-      if (/\/v2\/api\/attendance\/today/.test(res.url()) && res.ok()) todayBody = await res.json().catch(() => todayBody);
+      if (!/\/v2\/api\/attendance\/today/.test(res.url())) return;
+      if (res.ok()) todayBody = await res.json().catch(() => todayBody);
+      else if ([401, 403].includes(res.status())) todayRejected = true;
     });
 
-    await page.goto(`${ATTENDANCE_PAGE}?month=${today.slice(0, 7)}`, { waitUntil: 'domcontentloaded' });
-    if (!ON_ATTENDANCE_PAGE.test(page.url())) {
+    // ⏳ Razorpay's app ALWAYS opens /attendance-v2 first — even logged out — and
+    // only bounces to /login after its /today call is refused. So "on the
+    // attendance URL" proves nothing; wait for /today to answer OR the bounce.
+    // (Checking the URL too early made 3 check-ins fail on 2026-10-05.)
+    const waitForTodayOrLogin = async (): Promise<'today' | 'login' | 'timeout'> => {
+      for (let i = 0; i < 60; i++) {
+        if (todayBody) return 'today';
+        if (todayRejected || /\/login/.test(page.url())) return 'login';
+        await page.waitForTimeout(400);
+      }
+      return 'timeout';
+    };
+    const openAttendance = () => page.goto(`${ATTENDANCE_PAGE}?month=${today.slice(0, 7)}`, { waitUntil: 'domcontentloaded' });
+
+    await openAttendance();
+    let landed = await waitForTodayOrLogin();
+    if (landed === 'login') {
       console.log('🕘 Razorpay session expired → Google auto sign-in');
       if (!(await signInWithSavedGoogle(context, page))) return { outcome: 'needs-login' };
+      todayBody = null; todayRejected = false;
+      await openAttendance();                 // 🔁 fresh load so /today answers with the new session
+      landed = await waitForTodayOrLogin();
+      if (landed === 'login') return { outcome: 'needs-login' };
     }
-
-    // ⏳ wait for the page to ask Razorpay about today
-    for (let i = 0; i < 40 && !todayBody; i++) await page.waitForTimeout(500);
     if (!todayBody) return { outcome: 'refused', reason: "Razorpay's attendance page didn't load properly." };
     const status = toStatus(todayBody);
 

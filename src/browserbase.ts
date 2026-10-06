@@ -19,6 +19,10 @@ const PROJECT_ID = process.env.BROWSERBASE_PROJECT_ID || undefined; // optional 
 
 export const browserbaseEnabled = () => Boolean(API_KEY);
 
+// 💸 Browserbase says 402 when the plan's browser minutes are used up — not a
+// "busy, retry in a minute" situation; it stays broken until the plan changes.
+export const isOutOfBrowserMinutes = (e: unknown) => /→ 402/.test(String((e as Error)?.message ?? e));
+
 // 📱 Phone-sized window: Razorpay + Google render their mobile layouts, and the
 // live view fills a phone screen without pinch-zooming.
 const PHONE_VIEWPORT = { width: 412, height: 860 };
@@ -26,7 +30,9 @@ const PHONE_VIEWPORT = { width: 412, height: 860 };
 const callBrowserbase = async (path: string, init: { method?: string; body?: unknown } = {}): Promise<any> => {
   const r = await fetch(`${API}${path}`, {
     method: init.method ?? 'GET',
-    headers: { 'X-BB-API-Key': API_KEY, 'Content-Type': 'application/json' },
+    // 📭 Content-Type only WITH a body — Browserbase 400s an empty "JSON" body
+    // (that's how "unlink attendance" silently failed to delete a profile)
+    headers: { 'X-BB-API-Key': API_KEY, ...(init.body === undefined ? {} : { 'Content-Type': 'application/json' }) },
     body: init.body === undefined ? undefined : JSON.stringify(init.body),
   });
   const text = await r.text();

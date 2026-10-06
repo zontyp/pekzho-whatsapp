@@ -20,7 +20,7 @@
 
 import { Type, type TSchema } from 'typebox';
 import type { AgentTool } from '@earendil-works/pi-agent-core';
-import { browserbaseEnabled, createBrowserProfile, deleteBrowserProfile } from '../../browserbase.ts';
+import { browserbaseEnabled, createBrowserProfile, deleteBrowserProfile, isOutOfBrowserMinutes } from '../../browserbase.ts';
 import { localDate } from '../../clock.ts';
 import type { InboundTurn, Skill, UserContext } from '../types.ts';
 import * as store from './store.ts';
@@ -131,9 +131,11 @@ export const startAttendanceJob = (user: UserContext, job: Job): string => {
       await runAndReport(user, account.browserProfileId, job, true);
     } catch (e: any) {
       console.error(`🕘 attendance ${job} for ${user.userId} crashed: ${e.message}`);
-      await user.sayText(/→ 429|→ 402|concurren/i.test(e.message)
-        ? '🚦 My browser service is busy right now — please try again in a minute.'
-        : '😵 Something went wrong talking to Razorpay. Please try again in a minute.').catch(() => {});
+      await user.sayText(isOutOfBrowserMinutes(e)
+        ? '⏸️ Attendance is paused — my browser service has used up its free minutes. The owner needs to top it up; I can\'t do it from here, sorry!'
+        : /→ 429|concurren/i.test(e.message)
+          ? '🚦 My browser service is busy right now — please try again in a minute.'
+          : '😵 Something went wrong talking to Razorpay. Please try again in a minute.').catch(() => {});
     } finally {
       jobRunningFor.delete(user.userId);
     }
