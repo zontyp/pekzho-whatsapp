@@ -95,3 +95,12 @@ export const isAddingHabit = async (userId: string): Promise<boolean> => {
 export const setAddingHabit = async (userId: string, adding: boolean): Promise<void> => {
   await db.query('UPDATE users SET adding_habit = $2 WHERE user_id = $1', [userId, adding]);
 };
+
+// 📅 Verdicts on specific days only — for "show stats for 4th and 5th October".
+export const logsOnDates = async (userId: string, dates: string[]): Promise<Array<{ habitId: number } & HabitLog>> => {
+  const { rows } = await db.query(
+    `SELECT l.habit_id::int AS "habitId", l.log_date::text AS date, l.status
+     FROM habit_logs l JOIN habits h ON h.id = l.habit_id
+     WHERE h.user_id = $1 AND l.log_date = ANY($2::date[])`, [userId, dates]);
+  return rows;
+};

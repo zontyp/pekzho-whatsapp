@@ -21,7 +21,7 @@ import { greetingName, userContextFor } from '../../pekzho/user-context.ts';
 import { DRY_RUN, DRY_RUN_TEST_USER_PREFIX, templateStatus } from '../../whatsapp.ts';
 import type { InboundTurn, Skill, UserContext } from '../types.ts';
 import * as store from './store.ts';
-import { renderAllStatsCard, renderStatsCard } from './stats.ts';
+import { renderAllStatsCard, renderDaysCard, renderStatsCard } from './stats.ts';
 
 const REMINDER_TIME = process.env.HABIT_REMINDER_TIME ?? '21:00';
 const MAX_CHECKLIST_HABITS = 10; // 🧯 one WA message per habit — don't flood the chat
@@ -355,6 +355,27 @@ const habitTools = (user: UserContext): AgentTool<any>[] => [
     execute: async () => text(await sendHabitChecklist(user), true),
   }),
   defineTool({
+    name: 'send_habit_days',
+    label: 'Send days',
+    description: 'Send the habit squares for SPECIFIC day(s): "stats/status/streak/tracker for 4th October", "for 4th and 5th Oct", "yesterday", "last Monday". One 🟩 done / 🟥 skipped / ⬜ no entry square per habit per day. Resolve the dates yourself from today\'s date. Goes straight to the user — don\'t repeat it.',
+    parameters: Type.Object({
+      dates: Type.Array(Type.String({ description: 'YYYY-MM-DD in the user timezone' }), { minItems: 1, maxItems: 31 }),
+      habit: Type.Optional(Type.String({ description: 'Habit name or id; omit for all habits' })),
+    }),
+    execute: async (_id, p) => {
+      // 🧹 valid, unique, sorted, and not in the future
+      const dates = [...new Set(p.dates.filter((d: string) => /^\d{4}-\d{2}-\d{2}$/.test(d) && d <= user.today))].sort();
+      if (!dates.length) throw new Error(`No valid past dates given (today is ${user.today}).`);
+      let habits = await store.listHabits(user.userId);
+      if (p.habit && !ALL_HABITS_WORDS.test(p.habit.trim())) habits = [await resolveHabitOrThrow(user, p.habit)];
+      if (!habits.length) { await user.sayText('You have no habits yet 🌱 Send *add habit <name>* to start.'); return text('User has no habits.', true); }
+      const logs = await store.logsOnDates(user.userId, dates);
+      const card = renderDaysCard(habits.map((h) => ({ name: h.name, byDate: new Map(logs.filter((l) => l.habitId === h.id).map((l) => [l.date, l.status])) })), dates);
+      await user.sayText(card);
+      return text(`Day squares for ${dates.join(', ')} sent to the user.`, true);
+    },
+  }),
+  defineTool({
     name: 'send_habit_stats',
     label: 'Send stats',
     description: 'Send the stats card (emoji calendar, done/skipped counts, current + best streak). Use for ANY ask about stats, streak, tracker, progress, history, report, consistency or "how am I doing". Omit habit (or pass "all") to send ONE consolidated message covering all habits. Goes straight to the user — don\'t repeat it.',
@@ -378,6 +399,10 @@ const PAYLOAD_CHECKLIST = 'habits:checklist';   // "Mark today's habits"
 const PAYLOAD_STREAKS   = 'habits:streaks';     // "Show my streaks"
 
 // ✂️ {{2}} must be one line and not huge: "Daily Exercise, Read 10 pages, +3 more"
+// 🙌 Marked anything for today within this many hours before the reminder? Then
+// skip them — at 21:00 that means "since about noon".
+const SKIP_IF_MARKED_WITHIN_HOURS = Number(process.env.HABIT_REMINDER_SKIP_IF_MARKED_HOURS ?? 9);
+
 const habitListParam = (names: string[], maxChars = 180): string => {
   const shown: string[] = [];
   for (const n of names) {
@@ -392,18 +417,22 @@ const sendDailyReminders = async () => {
   const today = localDate();
   const { rows } = await db.query(
     `SELECT u.user_id, u.display_name, u.template_reminder_on,
-            (u.last_inbound_at > now() - interval '23 hours 50 minutes') AS in_window
+            (u.last_inbound_at > now() - interval '23 hours 50 minutes') AS in_window,
+            -- 🙌 already marked something for TODAY in the last few hours → no nudge needed
+            EXISTS (SELECT 1 FROM habit_logs l JOIN habits h ON h.id = l.habit_id
+                     WHERE h.user_id = u.user_id AND l.log_date = $1
+                       AND l.created_at > now() - make_interval(hours => $3)) AS marked_recently
      FROM users u
      WHERE EXISTS (SELECT 1 FROM habits h WHERE h.user_id = u.user_id)
        AND NOT u.reminders_opt_out
        AND (u.last_reminded_on IS NULL OR u.last_reminded_on < $1)
-       AND ($2::text IS NULL OR u.user_id LIKE $2 || '%')`, [today, DRY_RUN ? DRY_RUN_TEST_USER_PREFIX : null]);
+       AND ($2::text IS NULL OR u.user_id LIKE $2 || '%')`, [today, DRY_RUN ? DRY_RUN_TEST_USER_PREFIX : null, SKIP_IF_MARKED_WITHIN_HOURS]);
   if (!rows.length) { console.log('⏰ daily habit reminders: nobody due'); return; }
 
   // 💸 Outside the window = a PAID template — only for users the operator has
   // switched on (users.template_reminder_on). Everyone else just waits until
   // they message us again.
-  const wantsTemplate = (r: any) => !r.in_window && r.template_reminder_on;
+  const wantsTemplate = (r: any) => !r.in_window && r.template_reminder_on && !r.marked_recently;
 
   // ✅ Ask Meta once per run whether the template is usable yet (PENDING → skip).
   let templateReady = false;
@@ -417,8 +446,9 @@ const sendDailyReminders = async () => {
     }
   }
 
-  let freeForm = 0, viaTemplate = 0, skipped = 0, switchedOff = 0, failed = 0;
+  let freeForm = 0, viaTemplate = 0, skipped = 0, switchedOff = 0, alreadyMarked = 0, failed = 0;
   for (const r of rows) {
+    if (r.marked_recently) { alreadyMarked++; continue; } // 🙌 they're on it today — don't nag (or pay for a template)
     if (!r.in_window && !r.template_reminder_on) { switchedOff++; continue; } // 💸 operator hasn't enabled paid reminders — don't stamp
     if (!r.in_window && !templateReady) { skipped++; continue; } // 💤 retry tomorrow, don't stamp
     // 📝 stamp first, so a crash mid-loop can't double-remind anyone
@@ -441,7 +471,7 @@ const sendDailyReminders = async () => {
       console.error(`⏰ reminder to ${r.user_id} failed: ${e.message}`);
     }
   }
-  console.log(`⏰ daily habit reminders: free_form=${freeForm} template=${viaTemplate} skipped_template_not_ready=${skipped} skipped_template_switched_off=${switchedOff} failed=${failed}`);
+  console.log(`⏰ daily habit reminders: free_form=${freeForm} template=${viaTemplate} skipped_template_not_ready=${skipped} skipped_template_switched_off=${switchedOff} skipped_already_marked=${alreadyMarked} failed=${failed}`);
 };
 
 // 🔕 STOP / START for reminders (Meta requires an opt-out for business-initiated messages)
@@ -461,9 +491,11 @@ const describeHabitState = async (user: UserContext): Promise<string> => {
   const habits = await store.listHabits(user.userId);
   if (!habits.length) return '- habits: none yet';
   const statuses = await store.todaysStatuses(user.userId, user.today);
-  const lines = habits.map((h) => `  - ${h.id}: ${h.name} — today: ${statuses.get(h.id) ?? 'not marked'}`);
+  // 📅 Stamp the real date: the model once read "marked ✅ for today" from LAST
+  // NIGHT's chat as today and told the user "already done" without marking. 🙈
+  const lines = habits.map((h) => `  - ${h.id}: ${h.name} — ${user.today}: ${statuses.get(h.id) ?? 'NOT marked'}`);
   const unmarked = habits.filter((h) => !statuses.has(h.id)).length;
-  return [`- habits (${habits.length}, ${unmarked} not marked today):`, ...lines].join('\n');
+  return [`- habits on ${user.today} (${habits.length}, ${unmarked} not marked yet) — this live list is the ONLY truth about today:`, ...lines].join('\n');
 };
 
 export const habitsSkill: Skill = {
@@ -472,9 +504,11 @@ export const habitsSkill: Skill = {
     '## Skill: habit tracking 🎯',
     'You help the user build daily habits: add habits, mark them done/skipped, and show progress.',
     '- The "User state" section already lists their habits + today\'s status — use it instead of calling list_habits.',
-    '- When the user says they did (or skipped) something matching a habit, call mark_habit.',
+    '- When the user says they did (or skipped) something matching a habit, ALWAYS call mark_habit — even if you think it is already marked (re-marking is harmless). Never reply "already done" without calling it.',
+    '- Earlier messages in this chat may be from previous days: "for today" in them meant THAT day. Today\'s status comes only from the live habits list above.',
     '- "Yesterday" etc. → pass the right date (you know today\'s date). Only the last 7 days can be changed.',
     '- Showing/listing habits → send_habit_list (one plain message). Buttons to mark them → send_habit_checklist, only when they ask to mark / want the checklist.',
+    '- Stats/status/streak/tracker for SPECIFIC day(s) ("for 4th Oct", "4th and 5th October", "yesterday") → send_habit_days with those dates (one call, all dates).',
     '- stats, streak, tracker, progress, history, report, "how am I doing" and similar ALL mean send_habit_stats. For several or all habits make ONE call with no habit (never one call per habit).',
     '- Never invent habits or stats — always use the tools.',
     '- Status emojis: done = ✅, skipped = ❌, not marked = ⬜ (never use ⏭️ — older messages in the chat may still show it).',

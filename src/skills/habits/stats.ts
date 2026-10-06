@@ -66,6 +66,7 @@ export const renderStatsCard = (habitName: string, logs: HabitLog[], today: stri
     '',
     `✅ done ${s.done} · ❌ skipped ${s.skipped}`,
     `🔥 current streak ${s.currentStreak} · 🏆 best ${s.bestStreak}`,
+    '',
     LEGEND,
   ].join('\n');
 };
@@ -78,6 +79,7 @@ export const renderAllStatsCard = (habits: Array<{ name: string; logs: HabitLog[
     return [
       `🎯 *${name}*`,
       ...s.gridRows,
+      '', // 📱 breathing room — on iPhone the squares' bottom edge touches the next line's emoji
       `✅ ${s.done} · ❌ ${s.skipped} · 🔥 ${s.currentStreak} · 🏆 ${s.bestStreak}`,
     ].join('\n');
   });
@@ -87,6 +89,24 @@ export const renderAllStatsCard = (habits: Array<{ name: string; logs: HabitLog[
     blocks.join('\n\n'),
     '',
     `✅ done · ❌ skipped · 🔥 current streak · 🏆 best streak`,
+    '',
+    LEGEND,
+  ].join('\n');
+};
+
+// 📅 Chosen days only: one row of squares per habit, one square per day (in
+// date order), e.g. "🟩 🟥  *eyewash*". Squares first so they line up on a phone.
+export const renderDaysCard = (habits: Array<{ name: string; byDate: Map<string, HabitLog['status']> }>, dates: string[]): string => {
+  const label = (d: string) => new Date(d + 'T00:00:00Z').toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short', timeZone: 'UTC' });
+  const rows = habits.map(({ name, byDate }) => `${dates.map((d) => CELL[byDate.get(d) ?? 'none']).join(' ')}  *${name}*`);
+  const done = habits.reduce((n, h) => n + dates.filter((d) => h.byDate.get(d) === 'done').length, 0);
+  return [
+    `📅 *${dates.map(label).join(' · ')}*`,
+    '',
+    ...rows,
+    '',
+    `✅ ${done} of ${habits.length * dates.length} done`,
+    '',
     LEGEND,
   ].join('\n');
 };
