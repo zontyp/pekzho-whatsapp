@@ -161,8 +161,14 @@ const handleInboundEvent = async (req: IncomingMessage, res: ServerResponse) => 
         continue;
       }
       if (!value?.messages?.length) {
-        // 📨 delivered/read receipts + account updates. Just a peek in the logs.
-        if (value?.statuses?.length) console.log('📨 status event:', JSON.stringify(value.statuses).slice(0, 200));
+        // 📨 delivered/read receipts — one short line each. A FAILED one logs its
+        //    full errors[] (code + title + details): the old 200-char peek chopped
+        //    the error code off right where we needed it (e.g. 131049 cap vs bad number).
+        for (const s of (value?.statuses ?? []) as any[]) {
+          const line = `📨 status ${s.status} to=${s.recipient_id} wamid=${s.id}`;
+          if (s.status === 'failed') console.error(`${line} errors=${JSON.stringify(s.errors ?? [])}`);
+          else console.log(line);
+        }
         continue;
       }
       const nameOf = (waId: string) => value.contacts?.find((c) => c.wa_id === waId)?.profile?.name;
