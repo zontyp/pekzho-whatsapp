@@ -79,7 +79,8 @@ const SCHEMA = `
   --    (~₹1 each), so it's opt-IN per user, flipped by hand in Postgres:
   --      UPDATE users SET template_reminder_on = true  WHERE user_id = '91…';
   --    Inside the window the free checklist goes out regardless of this switch.
-  --    ANY inbound message flips it back OFF (see touchUser) — re-enable by hand.
+  --    ⚰️ RETIRED 2026-10-16: the template now goes to everyone not opted out
+  --    (STOP → reminders_opt_out). Column kept so old rows/queries don't break.
   ALTER TABLE users ADD COLUMN IF NOT EXISTS template_reminder_on boolean NOT NULL DEFAULT false;
   -- 🧹 anyone who already has a habit is, by definition, not new (backfills old rows)
   UPDATE users u SET is_user_new = false
@@ -99,9 +100,6 @@ export const touchUser = async (userId: string, displayName: string | undefined)
      ON CONFLICT (user_id) DO UPDATE
        SET display_name = CASE WHEN users.name_set_by_hand THEN users.display_name   -- 🏷️ hand-set name wins
                                ELSE COALESCE(EXCLUDED.display_name, users.display_name) END,
-           -- 💸 they replied → the 24h window is open (free messages again), so the
-           --    paid template switch flips OFF; the operator re-enables it by hand
-           template_reminder_on = false,
            last_inbound_at = now()`,
     [userId, displayName ?? null],
   );
