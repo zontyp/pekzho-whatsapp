@@ -82,6 +82,12 @@ const SCHEMA = `
   --    ⚰️ RETIRED 2026-10-16: the template now goes to everyone not opted out
   --    (STOP → reminders_opt_out). Column kept so old rows/queries don't break.
   ALTER TABLE users ADD COLUMN IF NOT EXISTS template_reminder_on boolean NOT NULL DEFAULT false;
+  -- 🚫 v7 (2026-10-18) — operator's per-user BLOCK on the paid template (the
+  --    reverse of the retired switch above): everyone gets it unless blocked.
+  --    For expensive numbers that never reply (Joy's NL template = ₹11.71 vs ₹0.86).
+  --    Free in-window checklists still go out. Set by hand:
+  --      UPDATE users SET template_reminder_blocked = true WHERE user_id = '…';
+  ALTER TABLE users ADD COLUMN IF NOT EXISTS template_reminder_blocked boolean NOT NULL DEFAULT false;
   -- 🧹 anyone who already has a habit is, by definition, not new (backfills old rows)
   UPDATE users u SET is_user_new = false
    WHERE u.is_user_new AND EXISTS (SELECT 1 FROM habits h WHERE h.user_id = u.user_id);

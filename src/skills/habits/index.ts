@@ -432,7 +432,7 @@ const habitListParam = (names: string[], maxChars = 180): string => {
 const sendDailyReminders = async () => {
   const today = localDate();
   const { rows } = await db.query(
-    `SELECT u.user_id, u.display_name,
+    `SELECT u.user_id, u.display_name, u.template_reminder_blocked,
             (u.last_inbound_at > now() - interval '23 hours 50 minutes') AS in_window,
             -- 🙌 already marked something for TODAY in the last few hours → no nudge needed
             EXISTS (SELECT 1 FROM habit_logs l JOIN habits h ON h.id = l.habit_id
@@ -450,7 +450,7 @@ const sendDailyReminders = async () => {
   // users) — the old per-user hand switch (users.template_reminder_on) flipped
   // itself off on every reply, so exactly the most engaged users lost their
   // reminder the first evening they forgot to mark. The column stays, unused.
-  const wantsTemplate = (r: any) => !r.in_window && !r.marked_recently;
+  const wantsTemplate = (r: any) => !r.in_window && !r.template_reminder_blocked && !r.marked_recently;
 
   // ✅ Ask Meta once per run whether the template is usable yet (PENDING → skip).
   let templateReady = false;
@@ -464,9 +464,10 @@ const sendDailyReminders = async () => {
     }
   }
 
-  let freeForm = 0, viaTemplate = 0, skipped = 0, alreadyMarked = 0, failed = 0;
+  let freeForm = 0, viaTemplate = 0, skipped = 0, blocked = 0, alreadyMarked = 0, failed = 0;
   for (const r of rows) {
     if (r.marked_recently) { alreadyMarked++; continue; } // 🙌 they're on it today — don't nag (or pay for a template)
+    if (!r.in_window && r.template_reminder_blocked) { blocked++; continue; } // 🚫 operator blocked the paid template for this user
     if (!r.in_window && !templateReady) { skipped++; continue; } // 💤 retry tomorrow, don't stamp
     // 📝 stamp first, so a crash mid-loop can't double-remind anyone
     await db.query('UPDATE users SET last_reminded_on = $2 WHERE user_id = $1', [r.user_id, today]);
@@ -488,7 +489,7 @@ const sendDailyReminders = async () => {
       console.error(`⏰ reminder to ${r.user_id} failed: ${e.message}`);
     }
   }
-  console.log(`⏰ daily habit reminders: free_form=${freeForm} template=${viaTemplate} skipped_template_not_ready=${skipped} skipped_already_marked=${alreadyMarked} failed=${failed}`);
+  console.log(`⏰ daily habit reminders: free_form=${freeForm} template=${viaTemplate} skipped_template_not_ready=${skipped} skipped_template_blocked=${blocked} skipped_already_marked=${alreadyMarked} failed=${failed}`);
 };
 
 // 🔕 STOP / START for reminders (Meta requires an opt-out for business-initiated messages)
