@@ -10,7 +10,7 @@ import { addDays } from '../../clock.ts';
 import type { HabitLog } from './store.ts';
 
 const MAX_DAYS_SHOWN = 12 * 7;      // 🧱 single-habit card: 12 weeks of squares
-const ALL_HABITS_DAYS_SHOWN = 4 * 7; // 🧱 all-habits card: 4 weeks each, so 10 habits fit in 4096 chars
+const ALL_HABITS_DAYS_SHOWN = 2 * 7; // 🧱 all-habits card: the last 2 weeks each
 
 const CELL = { done: '🟩', skipped: '🟥', none: '⬜' } as const;
 const LEGEND = `${CELL.done} done  ${CELL.skipped} skipped  ${CELL.none} no entry`;
@@ -71,7 +71,7 @@ export const renderStatsCard = (habitName: string, logs: HabitLog[], today: stri
   ].join('\n');
 };
 
-// 📊📊 Every habit in ONE message — compact block per habit (last 4 weeks).
+// 📊📊 Every habit in ONE message — compact block per habit (last 2 weeks).
 export const renderAllStatsCard = (habits: Array<{ name: string; logs: HabitLog[] }>, today: string): string => {
   const blocks = habits.map(({ name, logs }) => {
     if (!logs.length) return `🎯 *${name}*\n_no entries yet_`;
@@ -84,7 +84,7 @@ export const renderAllStatsCard = (habits: Array<{ name: string; logs: HabitLog[
     ].join('\n');
   });
   return [
-    `📊 *All habits* — up to the last 4 weeks, to ${today}`,
+    `📊 *All habits* — up to the last 2 weeks, to ${today}`,
     '',
     blocks.join('\n\n'),
     '',

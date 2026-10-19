@@ -94,7 +94,7 @@ const sendStats = async (user: UserContext, habitName: string): Promise<string> 
 };
 
 // 📊📊 "stats all" / "streak all habits" / bare "streak" → ONE consolidated
-// message with every habit (compact 4-week grid each). ~150 chars per habit,
+// message with every habit (compact 2-week grid each). ~150 chars per habit,
 // so 20 habits stay well under WhatsApp's 4096-char cap.
 const MAX_HABITS_IN_ALL_STATS = 20;
 const sendAllStats = async (user: UserContext): Promise<string> => {
@@ -105,7 +105,7 @@ const sendAllStats = async (user: UserContext): Promise<string> => {
   }
   const shown = habits.slice(0, MAX_HABITS_IN_ALL_STATS);
   const withLogs = await Promise.all(shown.map(async (h) => ({ name: h.name, logs: await store.habitLogs(h.id) })));
-  // 🎨 the 4-week pastel picture; emoji card if drawing/uploading fails
+  // 🎨 the 2-week pastel picture; emoji card if drawing/uploading fails
   try {
     const rows = withLogs.map(({ name, logs }) => ({
       name,

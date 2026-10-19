@@ -178,15 +178,15 @@ export const renderHabitCalendarPng = (name: string, byDate: Map<string, Status>
 const clipTitle = (s: string) => (s.length > 26 ? s.slice(0, 25).trimEnd() + '…' : s);
 
 // --------------------------------------------------------------------------
-// 📊📊 All habits — one row per habit, the last 28 days as small squares in four
-// week blocks, with the current streak on the right.
+// 📊📊 All habits — one row per habit, the last 14 days as squares in two week
+// blocks, with the current streak on the right.
 // --------------------------------------------------------------------------
-const ALL_DAYS = 28;
+const ALL_DAYS = 14;
 export const renderAllHabitsPng = (habits: Array<GridHabit & { currentStreak: number }>, today: string): Buffer => {
   const rows = habits.slice(0, MAX_ROWS);
   const days = Array.from({ length: ALL_DAYS }, (_, i) => addDays(today, i - (ALL_DAYS - 1)));
-  const cell = 18, gap = 3, weekGap = 12, streakW = 70;
-  const gridW = ALL_DAYS * cell + (ALL_DAYS - 1) * gap + 3 * (weekGap - gap);
+  const cell = 34, cellH = 44, gap = 6, weekGap = 22, streakW = 70;
+  const gridW = ALL_DAYS * cell + (ALL_DAYS - 1) * gap + (ALL_DAYS / 7 - 1) * (weekGap - gap);
   const gridX = W - PAD - streakW - gridW;
   const colX = (i: number) => gridX + i * (cell + gap) + Math.floor(i / 7) * (weekGap - gap);
   const headY = 232, rowY0 = headY + 34, rowH = 70;
@@ -194,7 +194,7 @@ export const renderAllHabitsPng = (habits: Array<GridHabit & { currentStreak: nu
   const parts: string[] = [];
 
   // 🗓️ the date each week block starts, and a 🔥 column header
-  for (let w = 0; w < 4; w++) parts.push(`<text x="${colX(w * 7)}" y="${headY}" font-size="24" fill="${C.sub}">${fmt(days[w * 7], { day: 'numeric', month: 'short' })}</text>`);
+  for (let w = 0; w < ALL_DAYS / 7; w++) parts.push(`<text x="${colX(w * 7)}" y="${headY}" font-size="24" fill="${C.sub}">${fmt(days[w * 7], { day: 'numeric', month: 'short' })}</text>`);
   parts.push(`<text x="${W - PAD}" y="${headY}" text-anchor="end" font-size="24" fill="${C.sub}">Streak</text>`);
 
   rows.forEach((h, r) => {
@@ -202,12 +202,12 @@ export const renderAllHabitsPng = (habits: Array<GridHabit & { currentStreak: nu
     parts.push(`<text x="${PAD}" y="${y + 36}" font-size="30" font-weight="600" fill="${C.ink}">${esc(h.name.length > 14 ? h.name.slice(0, 13).trimEnd() + '…' : h.name)}</text>`);
     days.forEach((d, i) => {
       const s = h.byDate.get(d);
-      parts.push(`<rect x="${colX(i)}" y="${y + 6}" width="${cell}" height="${cell * 2}" rx="6" fill="${s ? C[s] : C.none}"/>`);
+      parts.push(`<rect x="${colX(i)}" y="${y + 3}" width="${cell}" height="${cellH}" rx="10" fill="${s ? C[s] : C.none}"/>`);
     });
     parts.push(`<text x="${W - PAD}" y="${y + 38}" text-anchor="end" font-size="32" font-weight="700" fill="${h.currentStreak ? C.brand : C.sub}">${h.currentStreak}</text>`);
   });
   if (habits.length > MAX_ROWS) parts.push(`<text x="${PAD}" y="${rowY0 + rows.length * rowH + 30}" font-size="28" fill="${C.sub}">…plus ${habits.length - MAX_ROWS} more</text>`);
   parts.push(legendRow(H - 76));
 
-  return toPng(card(H, 'All habits', `Last 4 weeks  ·  ${fmt(days[0], { day: 'numeric', month: 'short' })} – ${fmt(today, { day: 'numeric', month: 'short' })}`, parts.join('\n')));
+  return toPng(card(H, 'All habits', `Last 2 weeks  ·  ${fmt(days[0], { day: 'numeric', month: 'short' })} – ${fmt(today, { day: 'numeric', month: 'short' })}`, parts.join('\n')));
 };
