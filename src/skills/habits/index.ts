@@ -115,7 +115,7 @@ const sendAllStats = async (user: UserContext): Promise<string> => {
     const best = [...rows].sort((a, b) => b.currentStreak - a.currentStreak)[0];
     await user.sayImage(
       renderAllHabitsPng(rows, user.today),
-      best?.currentStreak ? `📊 All habits — your longest run right now: *${best.name}* 🔥 ${best.currentStreak} day${best.currentStreak === 1 ? '' : 's'}` : '📊 All habits — mark one today to start a streak 💪',
+      best?.currentStreak ? `📊 All habits — best current streak: *${best.name}* 🔥 ${best.currentStreak} day${best.currentStreak === 1 ? '' : 's'}` : '📊 All habits — mark one today to start a streak 💪',
     );
     return `One consolidated stats picture for ${shown.length} habit(s) sent to the user.`;
   } catch (e: any) {
