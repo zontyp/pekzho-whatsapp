@@ -21,8 +21,9 @@ import { greetingName, userContextFor } from '../../pekzho/user-context.ts';
 import { DRY_RUN, DRY_RUN_TEST_USER_PREFIX, templateStatus } from '../../whatsapp.ts';
 import type { InboundTurn, Skill, UserContext } from '../types.ts';
 import * as store from './store.ts';
-import { renderAllStatsCard, renderDaysCard, renderStatsCard } from './stats.ts';
+import { habitNumbers, renderAllStatsCard, renderDaysCard, renderStatsCard } from './stats.ts';
 import { buildLeaderboard, recapTeaser, renderWeeklyRecap } from './recap.ts';
+import { renderAllHabitsPng, renderHabitCalendarPng, renderWeekGridPng } from './grid-image.ts';
 
 const REMINDER_TIME = process.env.HABIT_REMINDER_TIME ?? '21:00';
 const MAX_CHECKLIST_HABITS = 10; // 🧯 one WA message per habit — don't flood the chat
@@ -73,7 +74,22 @@ const sendStats = async (user: UserContext, habitName: string): Promise<string> 
     await user.sayText(`I couldn't find a habit called "${habitName}" 🤔${names ? `\nYour habits: ${names}` : ''}`);
     return 'Habit not found; told the user.';
   }
-  await user.sayText(renderStatsCard(habit.name, await store.habitLogs(habit.id), user.today));
+  const logs = await store.habitLogs(habit.id);
+  // 🎨 pastel calendar picture first; the emoji card is the fallback (and the
+  //    only option before the first mark — an empty calendar isn't worth a picture)
+  if (logs.length) {
+    try {
+      const n = habitNumbers(logs, user.today);
+      await user.sayImage(
+        renderHabitCalendarPng(habit.name, new Map(logs.map((l) => [l.date, l.status])), logs[0].date, user.today, n),
+        `📊 *${habit.name}* — ${n.currentStreak ? `🔥 ${n.currentStreak}-day streak, keep it going!` : 'mark it today to start a new streak 💪'}`,
+      );
+      return `Stats picture for "${habit.name}" sent to the user.`;
+    } catch (e: any) {
+      console.error(`🎨 stats image for ${user.userId} failed, falling back to emoji: ${e.message}`);
+    }
+  }
+  await user.sayText(renderStatsCard(habit.name, logs, user.today));
   return `Stats card for "${habit.name}" sent to the user.`;
 };
 
@@ -89,6 +105,22 @@ const sendAllStats = async (user: UserContext): Promise<string> => {
   }
   const shown = habits.slice(0, MAX_HABITS_IN_ALL_STATS);
   const withLogs = await Promise.all(shown.map(async (h) => ({ name: h.name, logs: await store.habitLogs(h.id) })));
+  // 🎨 the 4-week pastel picture; emoji card if drawing/uploading fails
+  try {
+    const rows = withLogs.map(({ name, logs }) => ({
+      name,
+      byDate: new Map(logs.map((l) => [l.date, l.status] as const)),
+      currentStreak: logs.length ? habitNumbers(logs, user.today).currentStreak : 0,
+    }));
+    const best = [...rows].sort((a, b) => b.currentStreak - a.currentStreak)[0];
+    await user.sayImage(
+      renderAllHabitsPng(rows, user.today),
+      best?.currentStreak ? `📊 All habits — your longest run right now: *${best.name}* 🔥 ${best.currentStreak} day${best.currentStreak === 1 ? '' : 's'}` : '📊 All habits — mark one today to start a streak 💪',
+    );
+    return `One consolidated stats picture for ${shown.length} habit(s) sent to the user.`;
+  } catch (e: any) {
+    console.error(`🎨 all-stats image for ${user.userId} failed, falling back to emoji: ${e.message}`);
+  }
   let card = renderAllStatsCard(withLogs, user.today);
   if (habits.length > shown.length) card += `\n\n…plus ${habits.length - shown.length} more — send *stats <habit>* for those.`;
   await user.sayText(card);
@@ -96,14 +128,23 @@ const sendAllStats = async (user: UserContext): Promise<string> => {
 };
 
 // 🏅 The weekly recap card (points, best/weakest habit, rank) + two next-step buttons.
-const sendWeeklyRecap = async (user: UserContext): Promise<string> => {
+export const sendWeeklyRecap = async (user: UserContext): Promise<string> => {
   const board = await buildLeaderboard(user.today);
   const me = board.users.find((u) => u.userId === user.userId);
   if (!me) {
     await user.sayText('You have no habits yet 🌱 Add one and you\'ll be on next week\'s leaderboard — try *add habit daily exercise* 💪');
     return 'User has no habits; told them how to add one.';
   }
-  await user.sayText(renderWeeklyRecap(me, board));
+  // 🎨 the pastel grid picture first; if drawing/uploading it fails, the text
+  //    card carries the emoji grid instead, so the recap always arrives whole
+  let sentPicture = false;
+  try {
+    await user.sayImage(renderWeekGridPng(me.habits, board.today));
+    sentPicture = true;
+  } catch (e: any) {
+    console.error(`🎨 grid image for ${user.userId} failed, falling back to emoji: ${e.message}`);
+  }
+  await user.sayText(renderWeeklyRecap(me, board, !sentPicture));
   await user.sayWithButtons('Keep the momentum going 👇', [
     { id: PAYLOAD_CHECKLIST, title: "✅ Mark today" },
     { id: 'addhabit', title: '➕ Add a habit' },

@@ -5,7 +5,7 @@
 // ============================================================================
 
 import { localDate } from '../clock.ts';
-import { sendButtons, sendTemplate, sendText, type ReplyButton } from '../whatsapp.ts';
+import { sendButtons, sendImage, sendTemplate, sendText, type ReplyButton } from '../whatsapp.ts';
 import type { UserContext } from '../skills/types.ts';
 
 // 👋 What to call someone in "Hi ___": their first name — but a leading title
@@ -34,5 +34,9 @@ export const userContextFor =(userId: string, name?: string): UserContext => ({
   sayTemplate: async (name, language, bodyParams, quickReplyPayloads = []) => {
     const wamid = await sendTemplate(userId, name, language, bodyParams, quickReplyPayloads);
     console.log(`📤 to=${userId} wamid=${wamid} template=${name} params=${JSON.stringify(bodyParams)}`);
+  },
+  sayImage: async (png, caption) => {
+    const wamid = await sendImage(userId, png, caption);
+    console.log(`📤 to=${userId} wamid=${wamid} image=${png.length}B caption=${JSON.stringify(caption ?? '')}`);
   },
 });

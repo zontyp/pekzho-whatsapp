@@ -128,6 +128,31 @@ export const downloadMedia = async (mediaId: string): Promise<{ data: Buffer; mi
 
 // 👀 Blue ticks + "typing…" bubble in one call. The bubble shows until we reply
 // (or ~25s), which covers the LLM thinking time nicely.
+// 🖼️ Pictures (the pastel habit grid): upload the bytes to Meta's media store,
+// then send by media id. Media ids live ~30 days, so we upload per send — tiny PNGs.
+export const sendImage = async (to: string, png: Buffer, caption?: string): Promise<string> => {
+  let mediaId = 'dry-run-media';
+  if (DRY_RUN) {
+    console.log(`🧪 [dry-run] would upload a ${png.length}-byte PNG for ${to}`);
+  } else {
+    const form = new FormData();
+    form.append('messaging_product', 'whatsapp');
+    form.append('type', 'image/png');
+    form.append('file', new Blob([new Uint8Array(png)], { type: 'image/png' }), 'habits.png');
+    const r = await fetch(`https://graph.facebook.com/${GRAPH_VERSION}/${PHONE_NUMBER}/media`, {
+      method: 'POST', headers: { Authorization: `Bearer ${TOKEN}` }, body: form,
+    });
+    const json: any = await r.json().catch(() => ({}));
+    if (!r.ok || !json.id) throw new Error(`Graph media upload ${r.status}: ${JSON.stringify(json?.error ?? json).slice(0, 300)}`);
+    mediaId = json.id;
+  }
+  const json = await postToGraph({
+    recipient_type: 'individual', to, type: 'image',
+    image: { id: mediaId, ...(caption ? { caption: clip(caption, 1024) } : {}) },
+  });
+  return json?.messages?.[0]?.id ?? '';
+};
+
 export const markReadAndShowTyping = async (messageId: string): Promise<void> => {
   await postToGraph({ status: 'read', message_id: messageId, typing_indicator: { type: 'text' } });
 };

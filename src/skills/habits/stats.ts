@@ -110,3 +110,9 @@ export const renderDaysCard = (habits: Array<{ name: string; byDate: Map<string,
     LEGEND,
   ].join('\n');
 };
+
+// 🔢 Just the numbers (for the pastel picture's stat tiles). Needs ≥1 log.
+export const habitNumbers = (logs: HabitLog[], today: string) => {
+  const s = summarize(logs, today, MAX_DAYS_SHOWN);
+  return { done: s.done, skipped: s.skipped, currentStreak: s.currentStreak, bestStreak: s.bestStreak };
+};

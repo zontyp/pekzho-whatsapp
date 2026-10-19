@@ -144,7 +144,8 @@ const pepTalk = (u: UserWeek): string => {
   return "🌱 Every mark counts, and you kept checking in. Small steps compound — let's aim for one more ✅ next week.";
 };
 
-export const renderWeeklyRecap = (u: UserWeek, board: Leaderboard): string => {
+// 🖼️ withGrid=false when the pastel PNG grid went out just before — no emoji grid twice.
+export const renderWeeklyRecap = (u: UserWeek, board: Leaderboard, withGrid = true): string => {
   const { weekStart, today } = board;
   const total = board.users.length;
   const marks = u.done + u.skipped;
@@ -156,14 +157,16 @@ export const renderWeeklyRecap = (u: UserWeek, board: Leaderboard): string => {
     '',
   ];
 
-  // 🟩 one row per habit — the week at a glance
-  for (const h of u.habits.slice(0, MAX_HABITS_IN_GRID)) {
-    const cells: string[] = [];
-    for (let d = weekStart; d <= today; d = addDays(d, 1)) cells.push(CELL[h.byDate.get(d) ?? 'none']);
-    lines.push(`${cells.join('')}  ${h.name}`);
+  // 🟩 one row per habit — the week at a glance (emoji fallback when there's no picture)
+  if (withGrid) {
+    for (const h of u.habits.slice(0, MAX_HABITS_IN_GRID)) {
+      const cells: string[] = [];
+      for (let d = weekStart; d <= today; d = addDays(d, 1)) cells.push(CELL[h.byDate.get(d) ?? 'none']);
+      lines.push(`${cells.join('')}  ${h.name}`);
+    }
+    if (u.habits.length > MAX_HABITS_IN_GRID) lines.push(`…plus ${u.habits.length - MAX_HABITS_IN_GRID} more`);
+    lines.push('');
   }
-  if (u.habits.length > MAX_HABITS_IN_GRID) lines.push(`…plus ${u.habits.length - MAX_HABITS_IN_GRID} more`);
-  lines.push('');
 
   // 📈 the numbers
   if (marks) {

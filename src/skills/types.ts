@@ -23,6 +23,8 @@ export interface UserContext {
   sayWithButtons: (text: string, buttons: ReplyButton[]) => Promise<void>;
   // 📜 approved template — for business-initiated sends outside the 24h window
   sayTemplate: (name: string, language: string, bodyParams: string[], quickReplyPayloads?: string[]) => Promise<void>;
+  // 🖼️ a PNG (e.g. the pastel habit grid), optional caption
+  sayImage: (png: Buffer, caption?: string) => Promise<void>;
 }
 
 // 📨 One inbound message, already flattened from Meta's payload shape.

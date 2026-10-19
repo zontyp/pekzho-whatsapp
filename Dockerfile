@@ -6,6 +6,8 @@ WORKDIR /app
 COPY package.json package-lock.json ./
 RUN npm ci --omit=dev --ignore-scripts && npm cache clean --force
 COPY src ./src
+# 🔤 Inter for the pastel habit-grid PNGs (slim image ships no fonts)
+COPY assets ./assets
 
 ENV NODE_ENV=production PORT=3000
 EXPOSE 3000
