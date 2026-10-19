@@ -88,6 +88,9 @@ const SCHEMA = `
   --    Free in-window checklists still go out. Set by hand:
   --      UPDATE users SET template_reminder_blocked = true WHERE user_id = '…';
   ALTER TABLE users ADD COLUMN IF NOT EXISTS template_reminder_blocked boolean NOT NULL DEFAULT false;
+  -- 🏅 v8 (2026-10-19) — the Sunday weekly recap's "already sent today" stamp,
+  --    so a restart at 16:00 can't send anyone two recaps.
+  ALTER TABLE users ADD COLUMN IF NOT EXISTS last_recap_on date;
   -- 🧹 anyone who already has a habit is, by definition, not new (backfills old rows)
   UPDATE users u SET is_user_new = false
    WHERE u.is_user_new AND EXISTS (SELECT 1 FROM habits h WHERE h.user_id = u.user_id);

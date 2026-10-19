@@ -36,6 +36,13 @@ Meta ─POST─▶ pk.pekzho.com/webhook ─Caddy─▶ pekzho-whatsapp:3000 ─
 WhatsApp's 24h window — outside it needs an approved template). Anything else → the LLM, which has the same
 abilities as tools (`add_habit`, `mark_habit`, `list_habits`, `delete_habit`, `send_habit_checklist`, `send_habit_stats`).
 
+### 🏅 Weekly recap (Sundays 16:00, `src/skills/habits/recap.ts`)
+Last 7 days per user: week grid, marks, longest streak, best + weakest habit, **points** (✅ done 2 · ❌ skip 1 ·
+🔥 +1 per done that's part of a 2+ day streak) and **leaderboard rank** (first names, top 3 + who's just ahead).
+Inside the 24h window the card goes out free; outside it the `weekly_habit_recap` template (id 2329382154489332),
+whose *See my recap* tap pulls the card. On demand: *recap* / *my rank* / *leaderboard*. STOP and
+`template_reminder_blocked` apply; `users.last_recap_on` stops doubles.
+
 ## 🕘 Attendance skill (Razorpay Payroll)
 `check in` / `check out` / `attendance` (status) / `link attendance` / `unlink attendance`, or free-form via LLM tools
 (`attendance_check_in`, `_check_out`, `_status`, `_unlink`). Runs in the background (~10–60s) and replies by itself;

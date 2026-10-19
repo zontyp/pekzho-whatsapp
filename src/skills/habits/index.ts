@@ -22,6 +22,7 @@ import { DRY_RUN, DRY_RUN_TEST_USER_PREFIX, templateStatus } from '../../whatsap
 import type { InboundTurn, Skill, UserContext } from '../types.ts';
 import * as store from './store.ts';
 import { renderAllStatsCard, renderDaysCard, renderStatsCard } from './stats.ts';
+import { buildLeaderboard, recapTeaser, renderWeeklyRecap } from './recap.ts';
 
 const REMINDER_TIME = process.env.HABIT_REMINDER_TIME ?? '21:00';
 const MAX_CHECKLIST_HABITS = 10; // 🧯 one WA message per habit — don't flood the chat
@@ -34,6 +35,7 @@ export const HELP_TEXT = [
   '• *checklist* / *mark all* — tap ✅ / ❌ for each habit',
   '• *daily exercise streak* — calendar + streaks (also *stats* / *tracker*)',
   '• *streak all* — every habit in one message',
+  '• *weekly recap* — your points, best habit + leaderboard rank',
   '',
   `Or just talk to me normally — "I ran today", "how am I doing on reading?" 💬`,
   `⏰ I'll nudge you at ${REMINDER_TIME} every evening — reply *STOP* to turn that off.`,
@@ -92,6 +94,26 @@ const sendAllStats = async (user: UserContext): Promise<string> => {
   await user.sayText(card);
   return `One consolidated stats message for ${shown.length} habit(s) sent to the user.`;
 };
+
+// 🏅 The weekly recap card (points, best/weakest habit, rank) + two next-step buttons.
+const sendWeeklyRecap = async (user: UserContext): Promise<string> => {
+  const board = await buildLeaderboard(user.today);
+  const me = board.users.find((u) => u.userId === user.userId);
+  if (!me) {
+    await user.sayText('You have no habits yet 🌱 Add one and you\'ll be on next week\'s leaderboard — try *add habit daily exercise* 💪');
+    return 'User has no habits; told them how to add one.';
+  }
+  await user.sayText(renderWeeklyRecap(me, board));
+  await user.sayWithButtons('Keep the momentum going 👇', [
+    { id: PAYLOAD_CHECKLIST, title: "✅ Mark today" },
+    { id: 'addhabit', title: '➕ Add a habit' },
+  ]);
+  return `Weekly recap sent: ${me.points} points, rank #${me.rank} of ${board.users.length}.`;
+};
+const RECAP_COMMANDS = new Set([
+  'recap', 'weekly recap', 'week recap', 'my recap', 'weekly report', 'weekly summary', 'my week',
+  'leaderboard', 'rank', 'my rank', 'points', 'my points', 'score card', 'scorecard',
+]);
 
 // 🌐 "all", "all habits", "every habit", "everything" → the consolidated card.
 // Checked BEFORE habit-name matching, so "all" never fuzzy-matches "Football".
@@ -182,6 +204,7 @@ const habitShortcut = async (turn: InboundTurn, user: UserContext): Promise<bool
   // 📜 Taps on the reminder TEMPLATE's quick replies (the tap re-opened the 24h window)
   if (turn.buttonId === PAYLOAD_CHECKLIST) { await sendHabitChecklist(user); return true; }
   if (turn.buttonId === PAYLOAD_STREAKS) { await sendAllStats(user); return true; }
+  if (turn.buttonId === PAYLOAD_RECAP) { await sendWeeklyRecap(user); return true; }
 
   // 🔘 Button taps from the checklist: "done:<id>" / "skip:<id>"
   const tap = turn.buttonId?.match(/^(done|skip):(\d+)$/);
@@ -241,6 +264,10 @@ const habitShortcut = async (turn: InboundTurn, user: UserContext): Promise<bool
   }
   if (CHECKLIST_COMMANDS.has(command)) {
     await sendHabitChecklist(user);
+    return true;
+  }
+  if (RECAP_COMMANDS.has(command)) {
+    await sendWeeklyRecap(user);
     return true;
   }
   // 📊 stats / streak / tracker (+ synonyms) → the same stats card.
@@ -382,6 +409,13 @@ const habitTools = (user: UserContext): AgentTool<any>[] => [
     parameters: Type.Object({ habit: Type.Optional(Type.String({ description: 'Habit name or id; omit for all habits' })) }),
     execute: async (_id, p) => text(p.habit && !ALL_HABITS_WORDS.test(p.habit.trim()) ? await sendStats(user, p.habit) : await sendAllStats(user), true),
   }),
+  defineTool({
+    name: 'send_weekly_recap',
+    label: 'Send weekly recap',
+    description: "Send the weekly recap card: last 7 days' marks, points (done 2, skip 1, +1 per done in a streak), longest streak, best + weakest habit, leaderboard rank and who's ahead. Use for 'recap', 'my week', 'points', 'rank', 'leaderboard', 'how did my week go'. Goes straight to the user — don't repeat it.",
+    parameters: Type.Object({}),
+    execute: async () => text(await sendWeeklyRecap(user), true),
+  }),
 ];
 
 // --------------------------------------------------------------------------
@@ -397,6 +431,7 @@ const REMINDER_TEMPLATE      = process.env.HABIT_REMINDER_TEMPLATE ?? 'habit_che
 const REMINDER_TEMPLATE_LANG = process.env.HABIT_REMINDER_TEMPLATE_LANG ?? 'en';
 const PAYLOAD_CHECKLIST = 'habits:checklist';   // "Mark today's habits"
 const PAYLOAD_STREAKS   = 'habits:streaks';     // "Show my streaks"
+const PAYLOAD_RECAP     = 'habits:recap';       // weekly recap template's "See my recap"
 
 // ✂️ {{2}} must be one line and not huge: "Daily Exercise, Read 10 pages, +3 more"
 // 🙌 Marked anything for today within this many hours before the reminder? Then
@@ -492,6 +527,68 @@ const sendDailyReminders = async () => {
   console.log(`⏰ daily habit reminders: free_form=${freeForm} template=${viaTemplate} skipped_template_not_ready=${skipped} skipped_template_blocked=${blocked} skipped_already_marked=${alreadyMarked} failed=${failed}`);
 };
 
+// --------------------------------------------------------------------------
+// 🏅 Weekly recap — Sundays at HABIT_RECAP_TIME. Same money rule as the reminder:
+// inside the 24h window the full card goes out FREE; outside it, the paid
+// `weekly_habit_recap` template ({{1}} name, {{2}} teaser) whose "See my recap"
+// tap re-opens the window and pulls the full card. STOP and the per-user
+// template block both apply.
+// --------------------------------------------------------------------------
+const RECAP_TIME          = process.env.HABIT_RECAP_TIME ?? '16:00';
+const RECAP_WEEKDAY       = Number(process.env.HABIT_RECAP_WEEKDAY ?? 0);   // 0 = Sunday
+const RECAP_TEMPLATE      = process.env.HABIT_RECAP_TEMPLATE ?? 'weekly_habit_recap';
+const RECAP_TEMPLATE_LANG = process.env.HABIT_RECAP_TEMPLATE_LANG ?? 'en';
+
+const isRecapDay = (date: string) => new Date(date + 'T00:00:00Z').getUTCDay() === RECAP_WEEKDAY;
+
+const sendWeeklyRecaps = async () => {
+  const today = localDate();
+  const board = await buildLeaderboard(today);
+  const { rows } = await db.query(
+    `SELECT u.user_id, u.display_name, u.template_reminder_blocked,
+            (u.last_inbound_at > now() - interval '23 hours 50 minutes') AS in_window
+       FROM users u
+      WHERE EXISTS (SELECT 1 FROM habits h WHERE h.user_id = u.user_id)
+        AND NOT u.reminders_opt_out
+        AND (u.last_recap_on IS NULL OR u.last_recap_on < $1)
+        AND ($2::text IS NULL OR u.user_id LIKE $2 || '%')`, [today, DRY_RUN ? DRY_RUN_TEST_USER_PREFIX : null]);
+  if (!rows.length) { console.log('🏅 weekly recaps: nobody due'); return; }
+
+  let templateReady = false;
+  if (rows.some((r: any) => !r.in_window && !r.template_reminder_blocked)) {
+    try {
+      const status = await templateStatus(RECAP_TEMPLATE, RECAP_TEMPLATE_LANG);
+      templateReady = status === 'APPROVED';
+      if (!templateReady) console.warn(`🏅 template ${RECAP_TEMPLATE} is ${status} — out-of-window users skipped this week`);
+    } catch (e: any) {
+      console.error(`🏅 recap template status check failed: ${e.message}`);
+    }
+  }
+
+  let freeForm = 0, viaTemplate = 0, notReady = 0, blocked = 0, failed = 0;
+  for (const r of rows) {
+    const me = board.users.find((u) => u.userId === r.user_id);
+    if (!me) continue; // 🧪 not on this board (test/real split)
+    if (!r.in_window && r.template_reminder_blocked) { blocked++; continue; }
+    if (!r.in_window && !templateReady) { notReady++; continue; }
+    await db.query('UPDATE users SET last_recap_on = $2 WHERE user_id = $1', [r.user_id, today]); // 📝 stamp first — never twice
+    const user = userContextFor(r.user_id, r.display_name);
+    try {
+      if (r.in_window) {
+        await sendWeeklyRecap(user);
+        freeForm++;
+      } else {
+        await user.sayTemplate(RECAP_TEMPLATE, RECAP_TEMPLATE_LANG, [me.name, recapTeaser(me, board)], [PAYLOAD_RECAP, PAYLOAD_CHECKLIST]);
+        viaTemplate++;
+      }
+    } catch (e: any) {
+      failed++;
+      console.error(`🏅 recap to ${r.user_id} failed: ${e.message}`);
+    }
+  }
+  console.log(`🏅 weekly recaps: free_form=${freeForm} template=${viaTemplate} skipped_template_not_ready=${notReady} skipped_template_blocked=${blocked} failed=${failed}`);
+};
+
 // 🔕 STOP / START for reminders (Meta requires an opt-out for business-initiated messages)
 const setReminders = async (user: UserContext, on: boolean) => {
   await db.query('UPDATE users SET reminders_opt_out = $2 WHERE user_id = $1', [user.userId, !on]);
@@ -526,21 +623,25 @@ export const habitsSkill: Skill = {
     '- Earlier messages in this chat may be from previous days: "for today" in them meant THAT day. Today\'s status comes only from the live habits list above.',
     '- "Yesterday" etc. → pass the right date (you know today\'s date). Only the last 7 days can be changed.',
     '- Showing/listing habits → send_habit_list (one plain message). Buttons to mark them → send_habit_checklist, only when they ask to mark / want the checklist.',
+    '- Weekly recap / points / rank / leaderboard / "how did my week go" → send_weekly_recap. A recap also goes out by itself every Sunday afternoon.',
     '- Stats/status/streak/tracker for SPECIFIC day(s) ("for 4th Oct", "4th and 5th October", "yesterday") → send_habit_days with those dates (one call, all dates).',
     '- stats, streak, tracker, progress, history, report, "how am I doing" and similar ALL mean send_habit_stats. For several or all habits make ONE call with no habit (never one call per habit).',
     '- Never invent habits or stats — always use the tools.',
     '- Status emojis: done = ✅, skipped = ❌, not marked = ⬜ (never use ⏭️ — older messages in the chat may still show it).',
     '- If they have no habits yet, nudge them to add one — suggest *Daily Exercise* as an easy first habit.',
-    '- When you mention commands, ONLY use these real ones: *add habit <name>*, *show habits*, *checklist* (buttons to mark), *<habit> streak*, *streak all*, *help*.',
+    '- When you mention commands, ONLY use these real ones: *add habit <name>*, *show habits*, *checklist* (buttons to mark), *<habit> streak*, *streak all*, *weekly recap*, *help*.',
     `- A reminder is sent daily at ${REMINDER_TIME}. If they want reminders off/on, call set_reminders (they can also type STOP / *start reminders*).`,
   ].join('\n'),
   tools: habitTools,
   shortcut: habitShortcut,
-  everyMinute: async (hhmm) => { if (hhmm === REMINDER_TIME) await sendDailyReminders(); },
+  everyMinute: async (hhmm) => {
+    if (hhmm === REMINDER_TIME) await sendDailyReminders();
+    if (hhmm === RECAP_TIME && isRecapDay(localDate())) await sendWeeklyRecaps();
+  },
   describeState: describeHabitState,
   vocabulary: async (user) => [
     ...(await store.listHabits(user.userId)).map((h) => h.name),
-    'streak', 'stats', 'tracker', 'checklist', 'show habits', 'add habit', 'mark all',
+    'streak', 'stats', 'tracker', 'checklist', 'recap', 'leaderboard', 'show habits', 'add habit', 'mark all',
   ],
   welcome: {
     examples: ['*add habit daily exercise*', '*daily exercise streak*', '*show habits*'],
