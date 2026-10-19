@@ -56,11 +56,14 @@ export const sendText = async (to: string, text: string): Promise<string> => {
 // webhook as type=interactive / button_reply with the button's `id` — that's how
 // the habit checklist's ✅ / ❌ taps find their way home.
 export interface ReplyButton { id: string; title: string }
-export const sendButtons = async (to: string, body: string, buttons: ReplyButton[]): Promise<string> => {
+// 🖼️ headerImageId (from uploadPng) puts a picture on top of the bubble — the
+// checklist uses it for each habit's pastel week strip.
+export const sendButtons = async (to: string, body: string, buttons: ReplyButton[], headerImageId?: string): Promise<string> => {
   const json = await postToGraph({
     recipient_type: 'individual', to, type: 'interactive',
     interactive: {
       type: 'button',
+      ...(headerImageId ? { header: { type: 'image', image: { id: headerImageId } } } : {}),
       body: { text: clip(body, 1024) },
       action: {
         buttons: buttons.slice(0, MAX_BUTTONS).map((b) => ({
@@ -130,22 +133,26 @@ export const downloadMedia = async (mediaId: string): Promise<{ data: Buffer; mi
 // (or ~25s), which covers the LLM thinking time nicely.
 // 🖼️ Pictures (the pastel habit grid): upload the bytes to Meta's media store,
 // then send by media id. Media ids live ~30 days, so we upload per send — tiny PNGs.
-export const sendImage = async (to: string, png: Buffer, caption?: string): Promise<string> => {
-  let mediaId = 'dry-run-media';
+// 📤 PNG bytes → a Meta media id (usable in image messages AND button headers)
+export const uploadPng = async (png: Buffer): Promise<string> => {
   if (DRY_RUN) {
-    console.log(`🧪 [dry-run] would upload a ${png.length}-byte PNG for ${to}`);
-  } else {
-    const form = new FormData();
-    form.append('messaging_product', 'whatsapp');
-    form.append('type', 'image/png');
-    form.append('file', new Blob([new Uint8Array(png)], { type: 'image/png' }), 'habits.png');
-    const r = await fetch(`https://graph.facebook.com/${GRAPH_VERSION}/${PHONE_NUMBER}/media`, {
-      method: 'POST', headers: { Authorization: `Bearer ${TOKEN}` }, body: form,
-    });
-    const json: any = await r.json().catch(() => ({}));
-    if (!r.ok || !json.id) throw new Error(`Graph media upload ${r.status}: ${JSON.stringify(json?.error ?? json).slice(0, 300)}`);
-    mediaId = json.id;
+    console.log(`🧪 [dry-run] would upload a ${png.length}-byte PNG`);
+    return 'dry-run-media';
   }
+  const form = new FormData();
+  form.append('messaging_product', 'whatsapp');
+  form.append('type', 'image/png');
+  form.append('file', new Blob([new Uint8Array(png)], { type: 'image/png' }), 'habits.png');
+  const r = await fetch(`https://graph.facebook.com/${GRAPH_VERSION}/${PHONE_NUMBER}/media`, {
+    method: 'POST', headers: { Authorization: `Bearer ${TOKEN}` }, body: form,
+  });
+  const json: any = await r.json().catch(() => ({}));
+  if (!r.ok || !json.id) throw new Error(`Graph media upload ${r.status}: ${JSON.stringify(json?.error ?? json).slice(0, 300)}`);
+  return json.id;
+};
+
+export const sendImage = async (to: string, png: Buffer, caption?: string): Promise<string> => {
+  const mediaId = await uploadPng(png);
   const json = await postToGraph({
     recipient_type: 'individual', to, type: 'image',
     image: { id: mediaId, ...(caption ? { caption: clip(caption, 1024) } : {}) },

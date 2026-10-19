@@ -20,7 +20,7 @@ export interface UserContext {
   name?: string;                 // WhatsApp profile name
   today: string;                 // YYYY-MM-DD in the user's timezone
   sayText: (text: string) => Promise<void>;
-  sayWithButtons: (text: string, buttons: ReplyButton[]) => Promise<void>;
+  sayWithButtons: (text: string, buttons: ReplyButton[], headerImage?: Buffer | string) => Promise<void>; // 🖼️ optional picture on top (PNG bytes, or an uploaded media id)
   // 📜 approved template — for business-initiated sends outside the 24h window
   sayTemplate: (name: string, language: string, bodyParams: string[], quickReplyPayloads?: string[]) => Promise<void>;
   // 🖼️ a PNG (e.g. the pastel habit grid), optional caption

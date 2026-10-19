@@ -211,3 +211,52 @@ export const renderAllHabitsPng = (habits: Array<GridHabit & { currentStreak: nu
 
   return toPng(card(H, 'All habits', `Last 2 weeks  ·  ${fmt(days[0], { day: 'numeric', month: 'short' })} – ${fmt(today, { day: 'numeric', month: 'short' })}`, parts.join('\n')));
 };
+
+// --------------------------------------------------------------------------
+// ✅ Checklist header — ONE habit, THIS week (Mon → Sun) as big soft squares.
+// Sits on top of that habit's ✅ Done / ❌ Skip button bubble. Days still to
+// come are faint outlines, so the week reads like a little to-do strip.
+// --------------------------------------------------------------------------
+export const renderHabitWeekStripPng = (name: string, byDate: Map<string, Status>, today: string, currentStreak: number): Buffer => {
+  const monday = addDays(today, -((new Date(today + 'T00:00:00Z').getUTCDay() + 6) % 7));
+  const days = Array.from({ length: 7 }, (_, i) => addDays(monday, i));
+  const cell = 112, gap = 20, H = 470;
+  const gridX = (W - (7 * cell + 6 * gap)) / 2, lettersY = 236, boxY = 262;
+  let done = 0, skipped = 0;
+  const parts: string[] = [];
+
+  days.forEach((d, i) => {
+    const x = gridX + i * (cell + gap), cx = x + cell / 2;
+    const isToday = d === today;
+    parts.push(`<text x="${cx}" y="${lettersY}" text-anchor="middle" font-size="30" font-weight="600" fill="${isToday ? C.ink : C.sub}">${fmt(d, { weekday: 'short' }).slice(0, 1)}</text>`);
+    if (d > today) {
+      // 🔮 still to come
+      parts.push(`<rect x="${x + 1.5}" y="${boxY + 1.5}" width="${cell - 3}" height="${cell - 3}" rx="28" fill="none" stroke="${C.none}" stroke-width="3"/>`);
+      return;
+    }
+    const s = byDate.get(d);
+    if (s === 'done') done++; else if (s === 'skipped') skipped++;
+    parts.push(`<rect x="${x}" y="${boxY}" width="${cell}" height="${cell}" rx="28" fill="${s ? C[s] : C.none}"/>`);
+    if (isToday) parts.push(`<rect x="${x - 5}" y="${boxY - 5}" width="${cell + 10}" height="${cell + 10}" rx="32" fill="none" stroke="${C.todayRing}" stroke-width="3" stroke-dasharray="7 7"/>`);
+  });
+
+  // 🔥 a streak chip, only when there's a streak worth showing off
+  if (currentStreak >= 2) {
+    const label = `${currentStreak}-day streak`;
+    const chipW = 40 + label.length * 17;
+    parts.push(`<rect x="${W - PAD - chipW}" y="76" width="${chipW}" height="56" rx="28" fill="${C.done}"/>`);
+    parts.push(`<text x="${W - PAD - chipW / 2}" y="113" text-anchor="middle" font-size="28" font-weight="700" fill="${C.brand}">${label}</text>`);
+  }
+
+  const maxTitle = currentStreak >= 2 ? 18 : 24; // 📏 leave room for the streak chip
+  const title = name.length > maxTitle ? name.slice(0, maxTitle - 1).trimEnd() + '…' : name;
+  const summary = done || skipped ? `This week  ·  ${done} done  ·  ${skipped} skipped` : 'This week  ·  a fresh start';
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${W}" height="${H}" viewBox="0 0 ${W} ${H}">
+<rect width="${W}" height="${H}" fill="${C.bg}"/>
+<rect x="24" y="24" width="${W - 48}" height="${H - 48}" rx="40" fill="${C.card}"/>
+<text x="${PAD}" y="124" font-size="56" font-weight="700" fill="${C.ink}">${esc(titleCase(title))}</text>
+<text x="${PAD}" y="174" font-size="30" fill="${C.sub}">${summary}</text>
+${parts.join('\n')}
+</svg>`;
+  return toPng(svg);
+};

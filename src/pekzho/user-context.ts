@@ -5,7 +5,7 @@
 // ============================================================================
 
 import { localDate } from '../clock.ts';
-import { sendButtons, sendImage, sendTemplate, sendText, type ReplyButton } from '../whatsapp.ts';
+import { sendButtons, sendImage, sendTemplate, sendText, uploadPng, type ReplyButton } from '../whatsapp.ts';
 import type { UserContext } from '../skills/types.ts';
 
 // 👋 What to call someone in "Hi ___": their first name — but a leading title
@@ -27,9 +27,10 @@ export const userContextFor =(userId: string, name?: string): UserContext => ({
     const loggable = text.replace(/(\/attendance\/login\/)[\w-]+/g, '$1…');
     console.log(`📤 to=${userId} wamid=${wamid} text=${JSON.stringify(Array.from(loggable).slice(0, 120).join(''))}`);
   },
-  sayWithButtons: async (text: string, buttons: ReplyButton[]) => {
-    const wamid = await sendButtons(userId, text, buttons);
-    console.log(`📤 to=${userId} wamid=${wamid} buttons=${buttons.map((b) => b.id).join(',')}`);
+  sayWithButtons: async (text: string, buttons: ReplyButton[], headerImage?: Buffer | string) => {
+    const mediaId = typeof headerImage === 'string' ? headerImage : headerImage ? await uploadPng(headerImage) : undefined;
+    const wamid = await sendButtons(userId, text, buttons, mediaId);
+    console.log(`📤 to=${userId} wamid=${wamid} buttons=${buttons.map((b) => b.id).join(',')}${mediaId ? ' +header_image' : ''}`);
   },
   sayTemplate: async (name, language, bodyParams, quickReplyPayloads = []) => {
     const wamid = await sendTemplate(userId, name, language, bodyParams, quickReplyPayloads);

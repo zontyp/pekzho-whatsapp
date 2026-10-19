@@ -18,12 +18,12 @@ import type { AgentTool } from '@earendil-works/pi-agent-core';
 import { db } from '../../db.ts';
 import { addDays, localDate } from '../../clock.ts';
 import { greetingName, userContextFor } from '../../pekzho/user-context.ts';
-import { DRY_RUN, DRY_RUN_TEST_USER_PREFIX, templateStatus } from '../../whatsapp.ts';
+import { DRY_RUN, DRY_RUN_TEST_USER_PREFIX, templateStatus, uploadPng } from '../../whatsapp.ts';
 import type { InboundTurn, Skill, UserContext } from '../types.ts';
 import * as store from './store.ts';
 import { habitNumbers, renderAllStatsCard, renderDaysCard, renderStatsCard } from './stats.ts';
 import { buildLeaderboard, recapTeaser, renderWeeklyRecap } from './recap.ts';
-import { renderAllHabitsPng, renderHabitCalendarPng, renderWeekGridPng } from './grid-image.ts';
+import { renderAllHabitsPng, renderHabitCalendarPng, renderHabitWeekStripPng, renderWeekGridPng } from './grid-image.ts';
 
 const REMINDER_TIME = process.env.HABIT_REMINDER_TIME ?? '21:00';
 const MAX_CHECKLIST_HABITS = 10; // 🧯 one WA message per habit — don't flood the chat
@@ -53,13 +53,26 @@ export const sendHabitChecklist = async (user: UserContext, header?: string): Pr
   }
   const statuses = await store.todaysStatuses(user.userId, user.today);
   await user.sayText(header ?? 'Please mark (done / skipped) your habits for today 👇');
-  for (const h of habits.slice(0, MAX_CHECKLIST_HABITS)) {
+  const shown = habits.slice(0, MAX_CHECKLIST_HABITS);
+  // 🎨 draw + upload every habit's pastel week strip IN PARALLEL (one by one took
+  //    ~2.5s per habit), then send the bubbles in order. A strip that fails → plain bubble.
+  const strips = await Promise.all(shown.map(async (h) => {
+    try {
+      const logs = await store.habitLogs(h.id);
+      const png = renderHabitWeekStripPng(h.name, new Map(logs.map((l) => [l.date, l.status] as const)), user.today,
+        logs.length ? habitNumbers(logs, user.today).currentStreak : 0);
+      return await uploadPng(png);
+    } catch (e: any) {
+      console.error(`🎨 checklist strip for ${user.userId}/${h.id} failed, sending plain: ${e.message}`);
+      return undefined;
+    }
+  }));
+  for (const [i, h] of shown.entries()) {
     const s = statuses.get(h.id);
-    const tag = s === 'done' ? '  ·  ✅ done' : s === 'skipped' ? '  ·  ❌ skipped' : '';
-    await user.sayWithButtons(`🎯 *${h.name}*${tag}`, [
-      { id: `done:${h.id}`, title: '✅ Done' },
-      { id: `skip:${h.id}`, title: '❌ Skip' },
-    ]);
+    const body = s === 'done' ? `✅ *${h.name}* — done today, nice! Tap to change.`
+      : s === 'skipped' ? `❌ *${h.name}* — skipped today. Tap to change.`
+      : `🎯 *${h.name}* — did you do it today?`;
+    await user.sayWithButtons(body, [{ id: `done:${h.id}`, title: '✅ Done' }, { id: `skip:${h.id}`, title: '❌ Skip' }], strips[i]);
   }
   if (habits.length > MAX_CHECKLIST_HABITS) {
     await user.sayText(`…plus ${habits.length - MAX_CHECKLIST_HABITS} more — just tell me "done <habit>" for those.`);
