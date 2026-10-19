@@ -67,6 +67,23 @@ export const sendHabitChecklist = async (user: UserContext, header?: string): Pr
   return `Checklist with ${habits.length} habit(s) sent to the user.`;
 };
 
+// ✍️ Right after a habit's stats: one tap to mark it for today ("✅ Done eyewash").
+// WhatsApp caps button titles at 20 chars, so long names get a "…".
+const offerMarkToday = async (user: UserContext, habit: store.Habit) => {
+  const status = (await store.todaysStatuses(user.userId, user.today)).get(habit.id);
+  const title = (prefix: string) => {
+    const room = 20 - prefix.length;
+    return prefix + (habit.name.length > room ? habit.name.slice(0, room - 1).trimEnd() + '…' : habit.name);
+  };
+  const body = status
+    ? `Today *${habit.name}* is ${status === 'done' ? '✅ done' : '❌ skipped'} — tap to change it 👇`
+    : `Mark *${habit.name}* for today 👇`;
+  await user.sayWithButtons(body, [
+    { id: `done:${habit.id}`, title: title('✅ Done ') },
+    { id: `skip:${habit.id}`, title: title('❌ Skip ') },
+  ]);
+};
+
 const sendStats = async (user: UserContext, habitName: string): Promise<string> => {
   const habit = await store.findHabit(user.userId, habitName);
   if (!habit) {
@@ -84,13 +101,15 @@ const sendStats = async (user: UserContext, habitName: string): Promise<string> 
         renderHabitCalendarPng(habit.name, new Map(logs.map((l) => [l.date, l.status])), logs[0].date, user.today, n),
         `📊 *${habit.name}* — ${n.currentStreak ? `🔥 ${n.currentStreak}-day streak, keep it going!` : 'mark it today to start a new streak 💪'}`,
       );
-      return `Stats picture for "${habit.name}" sent to the user.`;
+      await offerMarkToday(user, habit);
+      return `Stats picture for "${habit.name}" + Done/Skip buttons for today sent to the user.`;
     } catch (e: any) {
       console.error(`🎨 stats image for ${user.userId} failed, falling back to emoji: ${e.message}`);
     }
   }
   await user.sayText(renderStatsCard(habit.name, logs, user.today));
-  return `Stats card for "${habit.name}" sent to the user.`;
+  await offerMarkToday(user, habit);
+  return `Stats card for "${habit.name}" + Done/Skip buttons for today sent to the user.`;
 };
 
 // 📊📊 "stats all" / "streak all habits" / bare "streak" → ONE consolidated
