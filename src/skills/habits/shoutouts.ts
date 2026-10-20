@@ -33,7 +33,7 @@ const COMEBACK_GAP_DAYS  = 2;   // no done for this many days before yesterday â
 // WhatsApp name, so no King/Queen guessing) and all positive.
 const WINNER_NICKNAMES   = ['Champ', 'Legend', 'Rockstar', 'Superstar', 'Captain', 'Ace', 'Boss', 'MVP', 'Hero', 'Titan', 'Star'];
 const COMEBACK_NICKNAMES = ['Phoenix', 'Comeback Kid', 'Unstoppable', 'Bounce-back', 'Never-quit', 'Rising Star'];
-const WARMUP_NICKNAMES   = ['Fighter', 'Warming-up', 'Ready-to-roar', 'Future Champ', 'Go-getter', 'Almost-there', 'Tomorrow\'s Star', 'Getting-ready'];
+const WARMUP_NICKNAMES   = ['Fighter', 'Warrior', 'Persistent', 'About-to-comeback', 'Never-give-up', 'Comeback-loading', 'Brave-heart', 'Determined', 'Unbreakable'];
 
 export interface Shoutout { userId: string; name: string; nickname: string }
 export interface Shoutouts { day: string; winners: Shoutout[]; comebacks: Shoutout[]; warmingUp: Shoutout[]; warmingUpTotal: number }
