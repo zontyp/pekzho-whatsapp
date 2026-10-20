@@ -4,11 +4,12 @@
 // streak, POINTS, and where they rank on the Pekzho leaderboard.
 //
 // 🧮 Points (the user-facing "how scoring works" line mirrors this exactly):
-//   • ❌ skipped mark      → 1 pt   (honesty counts — you showed up and checked in)
-//   • ✅ done mark         → 2 pts
-//   • 🔥 streak bonus      → +1 pt for every done that's part of a streak
-//                            (2+ done days in a row for the same habit; a run
-//                            that started last week still counts)
+//   • 🔥 longest streak    → 1 pt per day of the longest run of dones on ANY
+//                            one habit, inside this week (max 7)
+//   • ✅ top habit's dones → 2 pts per done on the habit with the MOST dones
+//                            this week (max 14)
+//   ⚖️ Only your single best habit counts, so 1 habit or 10 it's a fair race —
+//   more habits never pad (or dilute) the score. Max 21.
 //
 // The window is "the last 7 days ending today", so the Sunday 16:00 run covers
 // Mon–Sun and an on-demand "recap" on a Wednesday still shows a full week.
@@ -28,7 +29,6 @@ export interface HabitWeek {
   done: number;
   skipped: number;
   longestRun: number;    // 🔥 consecutive done days INSIDE this week
-  streakBonus: number;
 }
 
 export interface UserWeek {
@@ -37,7 +37,8 @@ export interface UserWeek {
   habits: HabitWeek[];
   done: number;
   skipped: number;
-  streakBonus: number;
+  streakHabit?: HabitWeek;   // 🔥 the habit with the longest run this week
+  topHabit?: HabitWeek;      // ✅ the habit with the most dones this week
   points: number;
   rank: number;          // 🏅 1 = top; ties share a rank (1, 2, 2, 4…)
 }
@@ -85,8 +86,11 @@ export const buildLeaderboard = async (today: string): Promise<Leaderboard> => {
     const habits = [...u.habits.values()].map((h) => scoreHabit(h.name, h.createdOn, h.byDate, weekStart, today));
     const done = habits.reduce((n, h) => n + h.done, 0);
     const skipped = habits.reduce((n, h) => n + h.skipped, 0);
-    const streakBonus = habits.reduce((n, h) => n + h.streakBonus, 0);
-    return { userId, name: u.name, habits, done, skipped, streakBonus, points: 2 * done + skipped + streakBonus, rank: 0 };
+    // 🥇 one best habit per measure (ties → the other measure decides)
+    const streakHabit = [...habits].sort((a, b) => b.longestRun - a.longestRun || b.done - a.done)[0];
+    const topHabit = [...habits].sort((a, b) => b.done - a.done || b.longestRun - a.longestRun)[0];
+    const points = (streakHabit?.longestRun ?? 0) + 2 * (topHabit?.done ?? 0);
+    return { userId, name: u.name, habits, done, skipped, streakHabit, topHabit, points, rank: 0 };
   });
 
   // 🏁 best first; ties share a rank, then alphabetical so the board is stable
@@ -96,14 +100,11 @@ export const buildLeaderboard = async (today: string): Promise<Leaderboard> => {
 };
 
 const scoreHabit = (name: string, createdOn: string, byDate: Map<string, Status>, weekStart: string, today: string): HabitWeek => {
-  const isDone = (d: string) => byDate.get(d) === 'done';
-  let done = 0, skipped = 0, streakBonus = 0, run = 0, longestRun = 0;
+  let done = 0, skipped = 0, run = 0, longestRun = 0;
   for (let d = weekStart; d <= today; d = addDays(d, 1)) {
     const s = byDate.get(d);
     if (s === 'done') {
       done++;
-      // 🔥 part of a streak = a done neighbour on either side (yesterday may be last week)
-      if (isDone(addDays(d, -1)) || (d < today && isDone(addDays(d, 1)))) streakBonus++;
       run++;
     } else {
       if (s === 'skipped') skipped++;
@@ -119,7 +120,7 @@ const scoreHabit = (name: string, createdOn: string, byDate: Map<string, Status>
   const startedOn = earliestMark && earliestMark < createdOn ? earliestMark : createdOn;
   const firstDay = startedOn > weekStart ? startedOn : weekStart;
   const daysTracked = Math.max(1, Math.round((Date.parse(today) - Date.parse(firstDay)) / 86_400_000) + 1);
-  return { name, byDate: weekOnly, daysTracked: Math.min(7, daysTracked), done, skipped, longestRun, streakBonus };
+  return { name, byDate: weekOnly, daysTracked: Math.min(7, daysTracked), done, skipped, longestRun };
 };
 
 // --------------------------------------------------------------------------
@@ -171,8 +172,8 @@ export const renderWeeklyRecap = (u: UserWeek, board: Leaderboard, withGrid = tr
   // 📈 the numbers
   if (marks) {
     lines.push(`✅ *${plural(marks, 'mark')}* this week — ${u.done} done · ${u.skipped} skipped`);
-    const streakHabit = [...u.habits].sort((a, b) => b.longestRun - a.longestRun)[0];
-    if (streakHabit?.longestRun >= 2) lines.push(`🔥 Longest streak: *${streakHabit.name}* — ${streakHabit.longestRun} days in a row`);
+    const streakHabit = u.streakHabit;
+    if (streakHabit && streakHabit.longestRun >= 2) lines.push(`🔥 Longest streak: *${streakHabit.name}* — ${streakHabit.longestRun} days in a row`);
     const ranked = [...u.habits].sort((a, b) => b.done / b.daysTracked - a.done / a.daysTracked || b.longestRun - a.longestRun);
     const best = ranked[0];
     const weakest = ranked.at(-1)!;
@@ -188,9 +189,10 @@ export const renderWeeklyRecap = (u: UserWeek, board: Leaderboard, withGrid = tr
   // ⭐ points, with the maths shown so it feels earned (and legit)
   lines.push(`⭐ *${plural(u.points, 'point')}*`);
   if (u.points) {
-    const parts = [`✅ ${u.done}×2`, `❌ ${u.skipped}×1`];
-    if (u.streakBonus) parts.push(`🔥 streak bonus +${u.streakBonus}`);
-    lines.push(`   ${parts.join(' · ')}`);
+    const parts: string[] = [];
+    if (u.streakHabit?.longestRun) parts.push(`🔥 ${u.streakHabit.longestRun}-day streak (${u.streakHabit.name}) = ${u.streakHabit.longestRun}`);
+    if (u.topHabit?.done) parts.push(`✅ ${plural(u.topHabit.done, 'done')} on ${u.topHabit.name} ×2 = ${2 * u.topHabit.done}`);
+    for (const p of parts) lines.push(`   ${p}`);
   }
   lines.push('');
 
@@ -204,7 +206,7 @@ export const renderWeeklyRecap = (u: UserWeek, board: Leaderboard, withGrid = tr
     const nearest = ahead.slice(-2).reverse(); // 👀 the two people right above you
     lines.push(`Ahead of you: ${nearest.map((o) => `${o.name} (${o.points})`).join(', ')}${ahead.length > 2 ? ` +${ahead.length - 2} more` : ''}`);
     const gap = nearest[0].points - u.points + 1;
-    lines.push(`🎯 ${plural(gap, 'point')} to pass ${nearest[0].name} — that's about ${plural(Math.ceil(gap / 2), 'done')} ✅`);
+    lines.push(`🎯 ${plural(gap, 'point')} to pass ${nearest[0].name} — that's about ${plural(Math.ceil(gap / 3), 'more ✅ day')} on your top habit`);
   }
   lines.push('');
 
@@ -220,7 +222,7 @@ export const renderWeeklyRecap = (u: UserWeek, board: Leaderboard, withGrid = tr
   if (u.habits.length < 3) {
     lines.push('💡 Ready for one more? Easy wins like _Drink 2L water_, _Read 10 pages_ or _Sleep by 11_ — tap *Add a habit* below.');
   }
-  lines.push('', '_Scoring: ✅ done 2 · ❌ skip 1 · 🔥 +1 per done in a streak_');
+  lines.push('', '_Scoring: 🔥 1 per day of your longest streak + ✅ 2 per done on your top habit — only your best habit counts, so it\'s a fair race whether you track 1 habit or 10_');
   return lines.join('\n');
 };
 
