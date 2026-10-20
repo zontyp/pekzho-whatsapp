@@ -23,6 +23,7 @@ import type { InboundTurn, Skill, UserContext } from '../types.ts';
 import * as store from './store.ts';
 import { habitNumbers, renderAllStatsCard, renderDaysCard, renderStatsCard } from './stats.ts';
 import { buildLeaderboard, recapTeaser, renderWeeklyRecap } from './recap.ts';
+import { buildShoutouts, shoutoutBlock, shoutoutLine } from './shoutouts.ts';
 import { renderAllHabitsPng, renderHabitCalendarPng, renderHabitWeekStripPng, renderWeekGridPng } from './grid-image.ts';
 
 const REMINDER_TIME = process.env.HABIT_REMINDER_TIME ?? '21:00';
@@ -502,6 +503,10 @@ const habitTools = (user: UserContext): AgentTool<any>[] => [
 // its two quick replies carry the payloads below back to habitShortcut().
 const REMINDER_TEMPLATE      = process.env.HABIT_REMINDER_TEMPLATE ?? 'habit_checklist_reminder';
 const REMINDER_TEMPLATE_LANG = process.env.HABIT_REMINDER_TEMPLATE_LANG ?? 'en';
+// 📣 The shoutout flavour of the same reminder ({{1}} name, {{2}} yesterday's
+// winners / comebacks / warming-up line, {{3}} habit list; same two buttons).
+// Used once Meta approves it — until then the plain template above keeps going out.
+const SHOUTOUT_TEMPLATE = process.env.HABIT_SHOUTOUT_TEMPLATE ?? 'habit_daily_shoutout';
 const PAYLOAD_CHECKLIST = 'habits:checklist';   // "Mark today's habits"
 const PAYLOAD_STREAKS   = 'habits:streaks';     // "Show my streaks"
 const PAYLOAD_RECAP     = 'habits:recap';       // weekly recap template's "See my recap"
@@ -561,15 +566,33 @@ const sendDailyReminders = async () => {
   const wantsTemplate = (r: any) => !r.in_window && !r.template_reminder_blocked && !r.marked_recently;
 
   // ✅ Ask Meta once per run whether the template is usable yet (PENDING → skip).
-  let templateReady = false;
+  //    Shoutout template preferred; the plain one is the fallback while it's pending.
+  let templateReady = false, shoutoutReady = false;
   if (rows.some(wantsTemplate)) {
     try {
+      const status = await templateStatus(SHOUTOUT_TEMPLATE, REMINDER_TEMPLATE_LANG);
+      shoutoutReady = status === 'APPROVED';
+      if (!shoutoutReady) console.warn(`⏰ template ${SHOUTOUT_TEMPLATE} is ${status} — using ${REMINDER_TEMPLATE}`);
+    } catch (e: any) {
+      console.error(`⏰ shoutout template status check failed: ${e.message}`);
+    }
+    if (!shoutoutReady) try {
       const status = await templateStatus(REMINDER_TEMPLATE, REMINDER_TEMPLATE_LANG);
       templateReady = status === 'APPROVED';
       if (!templateReady) console.warn(`⏰ template ${REMINDER_TEMPLATE} is ${status} — out-of-window users skipped this run`);
     } catch (e: any) {
       console.error(`⏰ template status check failed: ${e.message}`);
     }
+    templateReady ||= shoutoutReady;
+  }
+
+  // 📣 Yesterday's winners / comebacks / warming-up — built ONCE, same for everyone tonight
+  let shoutouts: Awaited<ReturnType<typeof buildShoutouts>> | undefined;
+  try {
+    shoutouts = await buildShoutouts(today);
+    console.log(`📣 shoutouts for ${shoutouts.day}: ${shoutoutLine(shoutouts)} (warming-up total ${shoutouts.warmingUpTotal})`);
+  } catch (e: any) {
+    console.error(`📣 shoutouts failed, reminders go out without them: ${e.message}`);
   }
 
   let freeForm = 0, viaTemplate = 0, skipped = 0, blocked = 0, alreadyMarked = 0, failed = 0;
@@ -583,13 +606,18 @@ const sendDailyReminders = async () => {
     try {
       if (r.in_window) {
         // 🟢 inside 24h → the full tappable checklist, free-form
-        await sendHabitChecklist(user, reminderHeaderFor(r.display_name, today));
+        const block = shoutouts && shoutoutBlock(shoutouts);
+        await sendHabitChecklist(user, (block ? `${block}\n\n` : '') + reminderHeaderFor(r.display_name, today));
         freeForm++;
       } else {
         // 📜 outside 24h → the template; a tap on it re-opens the window
         const names = (await store.listHabits(r.user_id)).map((h) => h.name);
         const firstName = greetingName(r.display_name) ?? 'there';
-        await user.sayTemplate(REMINDER_TEMPLATE, REMINDER_TEMPLATE_LANG, [firstName, habitListParam(names)], [PAYLOAD_CHECKLIST, PAYLOAD_STREAKS]);
+        if (shoutoutReady && shoutouts) {
+          await user.sayTemplate(SHOUTOUT_TEMPLATE, REMINDER_TEMPLATE_LANG, [firstName, shoutoutLine(shoutouts), habitListParam(names)], [PAYLOAD_CHECKLIST, PAYLOAD_STREAKS]);
+        } else {
+          await user.sayTemplate(REMINDER_TEMPLATE, REMINDER_TEMPLATE_LANG, [firstName, habitListParam(names)], [PAYLOAD_CHECKLIST, PAYLOAD_STREAKS]);
+        }
         viaTemplate++;
       }
     } catch (e: any) {
