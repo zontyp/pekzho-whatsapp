@@ -95,6 +95,11 @@ const SCHEMA = `
   --    this user was last named as "gearing up", so the 3 named each day are
   --    always the ones who've waited longest (never the same 3 twice running).
   ALTER TABLE users ADD COLUMN IF NOT EXISTS last_spotlight_on date;
+  -- 🌱 v10 (2026-10-21) — operator-scheduled "add your first habit" nudge for
+  --    users with NO habits (they never get the 21:00 reminder). Set by hand:
+  --      UPDATE users SET first_habit_nudge_on = '2026-10-21' WHERE user_id = '…';
+  --    The 21:00 run sends it on/after that date, then clears it (one-shot).
+  ALTER TABLE users ADD COLUMN IF NOT EXISTS first_habit_nudge_on date;
   -- 🧹 anyone who already has a habit is, by definition, not new (backfills old rows)
   UPDATE users u SET is_user_new = false
    WHERE u.is_user_new AND EXISTS (SELECT 1 FROM habits h WHERE h.user_id = u.user_id);

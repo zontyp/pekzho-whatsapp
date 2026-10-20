@@ -630,6 +630,55 @@ const sendDailyReminders = async () => {
 };
 
 // --------------------------------------------------------------------------
+// 🌱 First-habit nudge — for users who joined but never added a habit (so the
+// 21:00 reminder skips them). One-shot, operator-scheduled via
+// users.first_habit_nudge_on; rides along with the 21:00 run. In-window → free
+// starter buttons; outside → the `habit_first_nudge` template ({{1}} name),
+// whose two quick replies are the same add:/addhabit ids as the welcome.
+// --------------------------------------------------------------------------
+const FIRST_NUDGE_TEMPLATE = process.env.HABIT_FIRST_NUDGE_TEMPLATE ?? 'habit_first_nudge';
+
+const sendFirstHabitNudges = async () => {
+  const today = localDate();
+  const { rows } = await db.query(
+    `SELECT u.user_id, u.display_name, u.template_reminder_blocked,
+            (u.last_inbound_at > now() - interval '23 hours 50 minutes') AS in_window
+       FROM users u
+      WHERE u.first_habit_nudge_on <= $1
+        AND NOT u.reminders_opt_out
+        AND NOT EXISTS (SELECT 1 FROM habits h WHERE h.user_id = u.user_id)
+        AND ($2::text IS NULL OR u.user_id LIKE $2 || '%')`, [today, DRY_RUN ? DRY_RUN_TEST_USER_PREFIX : null]);
+  if (!rows.length) return;
+
+  let templateReady = false;
+  if (rows.some((r: any) => !r.in_window && !r.template_reminder_blocked)) {
+    try { templateReady = (await templateStatus(FIRST_NUDGE_TEMPLATE, REMINDER_TEMPLATE_LANG)) === 'APPROVED'; }
+    catch (e: any) { console.error(`🌱 first-nudge template status check failed: ${e.message}`); }
+  }
+  for (const r of rows) {
+    if (!r.in_window && (r.template_reminder_blocked || !templateReady)) {
+      console.warn(`🌱 first-habit nudge to ${r.user_id} held — ${r.template_reminder_blocked ? 'template blocked' : `${FIRST_NUDGE_TEMPLATE} not approved yet`} (retrying tomorrow)`);
+      continue;
+    }
+    // 📝 one-shot: clear the schedule first, so a crash can't double-send
+    await db.query('UPDATE users SET first_habit_nudge_on = NULL WHERE user_id = $1', [r.user_id]);
+    const user = userContextFor(r.user_id, r.display_name);
+    const firstName = greetingName(r.display_name) ?? 'there';
+    try {
+      if (r.in_window) {
+        await user.sayWithButtons(`Hi ${firstName} 👋 your habit tracker is ready — you just haven't added a habit yet. Start small 👇`,
+          [{ id: 'add:Daily Exercise', title: '💪 Daily Exercise' }, { id: 'addhabit', title: '✍️ My own habit' }]);
+      } else {
+        await user.sayTemplate(FIRST_NUDGE_TEMPLATE, REMINDER_TEMPLATE_LANG, [firstName], ['add:Daily Exercise', 'addhabit']);
+      }
+      console.log(`🌱 first-habit nudge sent to ${r.user_id} (${r.in_window ? 'free-form' : 'template'})`);
+    } catch (e: any) {
+      console.error(`🌱 first-habit nudge to ${r.user_id} failed: ${e.message}`);
+    }
+  }
+};
+
+// --------------------------------------------------------------------------
 // 🏅 Weekly recap — Sundays at HABIT_RECAP_TIME. Same money rule as the reminder:
 // inside the 24h window the full card goes out FREE; outside it, the paid
 // `weekly_habit_recap` template ({{1}} name, {{2}} teaser) whose "See my recap"
@@ -737,7 +786,10 @@ export const habitsSkill: Skill = {
   tools: habitTools,
   shortcut: habitShortcut,
   everyMinute: async (hhmm) => {
-    if (hhmm === REMINDER_TIME) await sendDailyReminders();
+    if (hhmm === REMINDER_TIME) {
+      await sendDailyReminders();
+      await sendFirstHabitNudges();
+    }
     if (hhmm === RECAP_TIME && isRecapDay(localDate())) await sendWeeklyRecaps();
   },
   describeState: describeHabitState,
