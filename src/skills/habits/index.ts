@@ -23,7 +23,7 @@ import type { InboundTurn, Skill, UserContext } from '../types.ts';
 import * as store from './store.ts';
 import { habitNumbers, renderAllStatsCard, renderDaysCard, renderStatsCard } from './stats.ts';
 import { buildLeaderboard, recapTeaser, renderWeeklyRecap } from './recap.ts';
-import { buildShoutouts, shoutoutBlock, shoutoutLine } from './shoutouts.ts';
+import { buildShoutouts, shoutoutBlock, shoutoutLine, stampSpotlight } from './shoutouts.ts';
 import { renderAllHabitsPng, renderHabitCalendarPng, renderHabitWeekStripPng, renderWeekGridPng } from './grid-image.ts';
 
 const REMINDER_TIME = process.env.HABIT_REMINDER_TIME ?? '21:00';
@@ -590,6 +590,7 @@ const sendDailyReminders = async () => {
   let shoutouts: Awaited<ReturnType<typeof buildShoutouts>> | undefined;
   try {
     shoutouts = await buildShoutouts(today);
+    await stampSpotlight(shoutouts, today);
     console.log(`📣 shoutouts for ${shoutouts.day}: ${shoutoutLine(shoutouts)} (warming-up total ${shoutouts.warmingUpTotal})`);
   } catch (e: any) {
     console.error(`📣 shoutouts failed, reminders go out without them: ${e.message}`);

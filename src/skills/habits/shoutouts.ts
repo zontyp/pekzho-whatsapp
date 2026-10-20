@@ -3,19 +3,22 @@
 // that rides on top of the 21:00 daily reminder (template AND free-form).
 //
 // Everyone with a habit lands in exactly ONE bucket for yesterday:
-//   🏆 winners    → at least one ✅ done yesterday
-//   🔥 comebacks  → a ✅ done yesterday after 2+ days with no done at all
+//   🏆 winners    → marked ANYTHING yesterday (✅ done or ❌ skip — showing up wins)
+//   🔥 comebacks  → marked yesterday after a day (or more) with no marks at all
 //                   (they had a habit back then, so a brand-new user isn't "back")
-//   💪 warming up → no ✅ done yesterday (skips and silence both land here)
+//   💪 warming up → marked nothing yesterday
 //
-// Rate-neutral on purpose: one done is a win whether you track 1 habit or 6.
+// Rate-neutral on purpose: one mark is a win whether you track 1 habit or 6.
 // Every bucket gets an upbeat nickname ("Champ Karan", "Phoenix Geeta",
 // "Fighter Tejkumar") — the warming-up crowd included: the tone is "your turn
 // is coming", never "you lost". 🌱
 //
-// Warming-up is the biggest bucket by far, so only WARMING_UP_PER_DAY of them
-// are named per day — rotated by date, so a different few get the spotlight
-// each evening instead of the same three every night.
+// 🏆 ALL of yesterday's winners and comebacks are named — they earned it.
+// 💪 Warming-up is the biggest bucket by far, so only WARMING_UP_PER_DAY of them
+// are named per day: the ones who've waited longest since their last mention
+// (users.last_spotlight_on, never-named first). The reminder run stamps them
+// via stampSpotlight(), so tomorrow it's someone else's turn — everybody gets
+// cycled through before anyone is named twice.
 //
 // 🙈 People who sent STOP are never named in anyone's message.
 // ============================================================================
@@ -26,8 +29,7 @@ import { greetingName } from '../../pekzho/user-context.ts';
 import { DRY_RUN } from '../../whatsapp.ts';
 
 const WARMING_UP_PER_DAY = 3;
-const MAX_WINNERS_NAMED  = 6;   // ✂️ keeps the template param short even on a great day
-const COMEBACK_GAP_DAYS  = 2;   // no done for this many days before yesterday → "comeback"
+const COMEBACK_GAP_DAYS  = 1;   // no marks on the day(s) before yesterday → "comeback"
 
 // 🎖️ Nickname pools — all gender-neutral (we don't know anyone's gender from a
 // WhatsApp name, so no King/Queen guessing) and all positive.
@@ -35,7 +37,7 @@ const WINNER_NICKNAMES   = ['Champ', 'Legend', 'Rockstar', 'Superstar', 'Captain
 const COMEBACK_NICKNAMES = ['Phoenix', 'Comeback Kid', 'Unstoppable', 'Bounce-back', 'Never-quit', 'Rising Star'];
 const WARMUP_NICKNAMES   = ['Fighter', 'Warrior', 'Persistent', 'About-to-comeback', 'Never-give-up', 'Comeback-loading', 'Brave-heart', 'Determined', 'Unbreakable'];
 
-export interface Shoutout { userId: string; name: string; nickname: string }
+export interface Shoutout { userId: string; name: string; nickname: string; lastSpotlightOn?: string | null }
 export interface Shoutouts { day: string; winners: Shoutout[]; comebacks: Shoutout[]; warmingUp: Shoutout[]; warmingUpTotal: number }
 
 // 🔠 "PAVAN" → "Pavan" (same rule as the leaderboard)
@@ -53,42 +55,50 @@ const nickname = (group: Shoutout[], pool: string[], key: string) => {
   group.forEach((s, i) => { s.nickname = pool[(start + i) % pool.length]; });
 };
 
-// 📥 One query: per user, did they get a done yesterday / in the gap before it,
+// 📥 One query: per user, did they mark anything yesterday / in the gap before it,
 // and did they already have a habit back then.
 export const buildShoutouts = async (today: string): Promise<Shoutouts> => {
   const day = addDays(today, -1);
   const gapStart = addDays(day, -COMEBACK_GAP_DAYS);
   const { rows } = await db.query(
-    `SELECT u.user_id, u.display_name,
-            bool_or(l.log_date = $1::date AND l.status = 'done')                     AS done_yesterday,
-            bool_or(l.log_date >= $2::date AND l.log_date < $1::date AND l.status = 'done') AS done_in_gap,
+    `SELECT u.user_id, u.display_name, u.last_spotlight_on::text AS last_spotlight_on,
+            bool_or(l.log_date = $1::date)                                           AS marked_yesterday,
+            bool_or(l.log_date >= $2::date AND l.log_date < $1::date)                AS marked_in_gap,
             bool_or((h.created_at AT TIME ZONE $3)::date <= $2::date)                AS had_habit_before_gap,
             bool_or((h.created_at AT TIME ZONE $3)::date <= $1::date)                AS had_habit_yesterday
        FROM users u
        JOIN habits h USING (user_id)
        LEFT JOIN habit_logs l ON l.habit_id = h.id AND l.log_date BETWEEN $2::date AND $1::date
       WHERE NOT u.reminders_opt_out
-      GROUP BY u.user_id, u.display_name`, [day, gapStart, TIMEZONE]);
+      GROUP BY u.user_id, u.display_name, u.last_spotlight_on`, [day, gapStart, TIMEZONE]);
 
   const winners: Shoutout[] = [], comebacks: Shoutout[] = [], warmingUp: Shoutout[] = [];
   for (const r of rows) {
     if (isTestUser(r.user_id) !== DRY_RUN) continue;   // 🧪 test and real users never mix
     if (!r.had_habit_yesterday) continue;              // 🐣 joined today — nothing to judge yet
     const name = tidyName(greetingName(r.display_name) ?? 'Someone');
-    const who = { userId: r.user_id, name, nickname: '' };
-    if (r.done_yesterday && !r.done_in_gap && r.had_habit_before_gap) comebacks.push(who);
-    else if (r.done_yesterday) winners.push(who);
+    const who = { userId: r.user_id, name, nickname: '', lastSpotlightOn: r.last_spotlight_on };
+    if (r.marked_yesterday && !r.marked_in_gap && r.had_habit_before_gap) comebacks.push(who);
+    else if (r.marked_yesterday) winners.push(who);
     else warmingUp.push(who);
   }
   winners.sort((a, b) => a.name.localeCompare(b.name));
   comebacks.sort((a, b) => a.name.localeCompare(b.name));
-  // 🔄 rotate the warming-up spotlight by date
-  warmingUp.sort((a, b) => hash(`${a.userId}:${day}:spot`) - hash(`${b.userId}:${day}:spot`));
-  const named = { winners: winners.slice(0, MAX_WINNERS_NAMED), comebacks, warmingUp: warmingUp.slice(0, WARMING_UP_PER_DAY) };
+  // 🔄 longest-waiting first. Anyone already stamped TODAY sorts to the very
+  // front, so a re-run (restart, preview) picks the same 3 instead of 3 new ones.
+  const waitKey = (s: Shoutout) => (s.lastSpotlightOn === today ? '0' : s.lastSpotlightOn ? `2${s.lastSpotlightOn}` : '1');
+  warmingUp.sort((a, b) => waitKey(a).localeCompare(waitKey(b)) || hash(`${a.userId}:${day}`) - hash(`${b.userId}:${day}`));
+  const named = { winners, comebacks, warmingUp: warmingUp.slice(0, WARMING_UP_PER_DAY) };
   nickname(named.winners, WINNER_NICKNAMES, `${day}:win`);
   nickname(named.comebacks, COMEBACK_NICKNAMES, `${day}:back`);
   nickname(named.warmingUp, WARMUP_NICKNAMES, `${day}:warm`);
   return { day, ...named, warmingUpTotal: warmingUp.length };
+};
+
+// 📝 "these 3 had their turn today" — called by the reminder run, not by previews
+export const stampSpotlight = async (s: Shoutouts, today: string) => {
+  if (!s.warmingUp.length) return;
+  await db.query('UPDATE users SET last_spotlight_on = $2 WHERE user_id = ANY($1)', [s.warmingUp.map((w) => w.userId), today]);
 };
 
 const titled = (s: Shoutout) => `${s.nickname} ${s.name}`;

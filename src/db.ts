@@ -91,6 +91,10 @@ const SCHEMA = `
   -- 🏅 v8 (2026-10-19) — the Sunday weekly recap's "already sent today" stamp,
   --    so a restart at 16:00 can't send anyone two recaps.
   ALTER TABLE users ADD COLUMN IF NOT EXISTS last_recap_on date;
+  -- 📣 v9 (2026-10-21) — the daily shoutout's warming-up spotlight: which day
+  --    this user was last named as "gearing up", so the 3 named each day are
+  --    always the ones who've waited longest (never the same 3 twice running).
+  ALTER TABLE users ADD COLUMN IF NOT EXISTS last_spotlight_on date;
   -- 🧹 anyone who already has a habit is, by definition, not new (backfills old rows)
   UPDATE users u SET is_user_new = false
    WHERE u.is_user_new AND EXISTS (SELECT 1 FROM habits h WHERE h.user_id = u.user_id);
