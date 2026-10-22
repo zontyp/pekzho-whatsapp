@@ -407,16 +407,22 @@ const habitTools = (user: UserContext): AgentTool<any>[] => [
     parameters: Type.Object({
       habit: Type.String({ description: 'Habit name or id' }),
       status: Type.Union([Type.Literal('done'), Type.Literal('skipped')]),
-      date: Type.Optional(Type.String({ description: 'YYYY-MM-DD in the user timezone; omit for today' })),
+      date: Type.Optional(Type.String({ description: 'Write "today" or "yesterday" for those (never compute them yourself); YYYY-MM-DD in the user timezone only for other days. Omit for today.' })),
     }),
     execute: async (_id, p) => {
-      const date = p.date ?? user.today;
+      // 📅 "yesterday" is resolved HERE, not by the model: on 22 Oct it once
+      //    copied "yesterday (16 Oct)" out of an old chat turn and marked the
+      //    wrong day. The code knows what day it is; the LLM only thinks it does.
+      const word = p.date?.trim().toLowerCase();
+      const date = !word || word === 'today' ? user.today : word === 'yesterday' ? addDays(user.today, -1) : word;
       if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || date > user.today || date < addDays(user.today, -7)) {
         throw new Error(`Date must be between ${addDays(user.today, -7)} and ${user.today}.`);
       }
       const habit = await resolveHabitOrThrow(user, p.habit);
       await store.logHabit(user.userId, habit.id, date, p.status);
-      return text(`Marked "${habit.name}" as ${p.status} on ${date}.`);
+      const dayName = new Date(date + 'T00:00:00Z').toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'short', timeZone: 'UTC' });
+      const relative = date === user.today ? ' (today)' : date === addDays(user.today, -1) ? ' (yesterday)' : '';
+      return text(`Marked "${habit.name}" as ${p.status} on ${dayName}${relative} [${date}]. Tell the user this exact date.`);
     },
   }),
   defineTool({
@@ -761,7 +767,8 @@ const describeHabitState = async (user: UserContext): Promise<string> => {
   // NIGHT's chat as today and told the user "already done" without marking. 🙈
   const lines = habits.map((h) => `  - ${h.id}: ${h.name} — ${user.today}: ${statuses.get(h.id) ?? 'NOT marked'}`);
   const unmarked = habits.filter((h) => !statuses.has(h.id)).length;
-  return [`- habits on ${user.today} (${habits.length}, ${unmarked} not marked yet) — this live list is the ONLY truth about today:`, ...lines].join('\n');
+  return [`- today is ${user.today}, yesterday was ${addDays(user.today, -1)} — dates mentioned in older chat messages are stale`,
+    `- habits on ${user.today} (${habits.length}, ${unmarked} not marked yet) — this live list is the ONLY truth about today:`, ...lines].join('\n');
 };
 
 export const habitsSkill: Skill = {
@@ -772,7 +779,7 @@ export const habitsSkill: Skill = {
     '- The "User state" section already lists their habits + today\'s status — use it instead of calling list_habits.',
     '- When the user says they did (or skipped) something matching a habit, ALWAYS call mark_habit — even if you think it is already marked (re-marking is harmless). Never reply "already done" without calling it.',
     '- Earlier messages in this chat may be from previous days: "for today" in them meant THAT day. Today\'s status comes only from the live habits list above.',
-    '- "Yesterday" etc. → pass the right date (you know today\'s date). Only the last 7 days can be changed.',
+    '- Marking for "today" / "yesterday" → pass date "today" / "yesterday" literally (the tool resolves it). Other days ("Monday", "20th") → YYYY-MM-DD from today\'s date above. Only the last 7 days can be changed. Confirm using the date the tool returns.',
     '- Showing/listing habits → send_habit_list (one plain message). Buttons to mark them → send_habit_checklist, only when they ask to mark / want the checklist.',
     '- Weekly recap / points / rank / leaderboard / "how did my week go" → send_weekly_recap. A recap also goes out by itself every Sunday afternoon.',
     '- Stats/status/streak/tracker for SPECIFIC day(s) ("for 4th Oct", "4th and 5th October", "yesterday") → send_habit_days with those dates (one call, all dates).',

@@ -189,12 +189,15 @@ export const renderAllHabitsPng = (habits: Array<GridHabit & { currentStreak: nu
   const gridW = ALL_DAYS * cell + (ALL_DAYS - 1) * gap + (ALL_DAYS / 7 - 1) * (weekGap - gap);
   const gridX = W - PAD - streakW - gridW;
   const colX = (i: number) => gridX + i * (cell + gap) + Math.floor(i / 7) * (weekGap - gap);
-  const headY = 232, rowY0 = headY + 34, rowH = 70;
+  const headY = 214, numY = headY + 36, rowY0 = numY + 18, rowH = 70;
   const H = rowY0 + rows.length * rowH + (habits.length > MAX_ROWS ? 50 : 0) + 150;
   const parts: string[] = [];
 
   // 🗓️ the date each week block starts, and a 🔥 column header
   for (let w = 0; w < ALL_DAYS / 7; w++) parts.push(`<text x="${colX(w * 7)}" y="${headY}" font-size="24" fill="${C.sub}">${fmt(days[w * 7], { day: 'numeric', month: 'short' })}</text>`);
+  // 🔢 …and every column's own day number, so "where's the 20th?" is one glance
+  //    (today in ink + bold). Asked for after a user couldn't find a back-mark.
+  days.forEach((d, i) => parts.push(`<text x="${colX(i) + cell / 2}" y="${numY}" text-anchor="middle" font-size="19" font-weight="${d === today ? 700 : 400}" fill="${d === today ? C.ink : C.sub}">${Number(d.slice(8))}</text>`));
   parts.push(`<text x="${W - PAD}" y="${headY}" text-anchor="end" font-size="24" fill="${C.sub}">Streak</text>`);
 
   rows.forEach((h, r) => {
