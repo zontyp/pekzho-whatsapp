@@ -16,7 +16,7 @@
 import { Type, type TSchema } from 'typebox';
 import type { AgentTool } from '@earendil-works/pi-agent-core';
 import { db } from '../../db.ts';
-import { addDays, localDate } from '../../clock.ts';
+import { addDays, localDate, resolveDayWords, shortDay } from '../../clock.ts';
 import { greetingName, userContextFor } from '../../pekzho/user-context.ts';
 import { DRY_RUN, DRY_RUN_TEST_USER_PREFIX, templateStatus, uploadPng } from '../../whatsapp.ts';
 import type { InboundTurn, Skill, UserContext } from '../types.ts';
@@ -407,17 +407,17 @@ const habitTools = (user: UserContext): AgentTool<any>[] => [
     parameters: Type.Object({
       habit: Type.String({ description: 'Habit name or id' }),
       status: Type.Union([Type.Literal('done'), Type.Literal('skipped')]),
-      date: Type.Optional(Type.String({ description: 'Write "today" or "yesterday" for those (never compute them yourself); YYYY-MM-DD in the user timezone only for other days. Omit for today.' })),
+      date: Type.Optional(Type.String({ description: 'The day IN THE USER\'S OWN WORDS — "today", "yesterday", "day before yesterday", "monday", "last friday", "20th", "20 oct". Never convert it to a date yourself. Omit for today.' })),
     }),
     execute: async (_id, p) => {
       // 📅 "yesterday" is resolved HERE, not by the model: on 22 Oct it once
       //    copied "yesterday (16 Oct)" out of an old chat turn and marked the
       //    wrong day. The code knows what day it is; the LLM only thinks it does.
-      const word = p.date?.trim().toLowerCase();
-      const date = !word || word === 'today' ? user.today : word === 'yesterday' ? addDays(user.today, -1) : word;
-      if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || date > user.today || date < addDays(user.today, -7)) {
-        throw new Error(`Date must be between ${addDays(user.today, -7)} and ${user.today}.`);
-      }
+      //    Now ALL relative words go through resolveDayWords. 🧮
+      const date = resolveDayWords(p.date, user.today);
+      if (!date) throw new Error(`Couldn't tell which day "${p.date}" is — ask the user which date they mean.`);
+      if (date > user.today) throw new Error(`${shortDay(date)} is in the future — habits can only be marked for today or earlier. Tell the user.`);
+      if (date < addDays(user.today, -7)) throw new Error(`${shortDay(date)} is too far back — only the last 7 days (from ${shortDay(addDays(user.today, -7))}) can be changed. Tell the user.`);
       const habit = await resolveHabitOrThrow(user, p.habit);
       await store.logHabit(user.userId, habit.id, date, p.status);
       const dayName = new Date(date + 'T00:00:00Z').toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'short', timeZone: 'UTC' });
@@ -464,15 +464,15 @@ const habitTools = (user: UserContext): AgentTool<any>[] => [
   defineTool({
     name: 'send_habit_days',
     label: 'Send days',
-    description: 'Send the habit squares for SPECIFIC day(s): "stats/status/streak/tracker for 4th October", "for 4th and 5th Oct", "yesterday", "last Monday". One 🟩 done / 🟥 skipped / ⬜ no entry square per habit per day. Resolve the dates yourself from today\'s date. Goes straight to the user — don\'t repeat it.',
+    description: 'Send the habit squares for SPECIFIC day(s): "stats/status/streak/tracker for 4th October", "for 4th and 5th Oct", "yesterday", "last Monday". One 🟩 done / 🟥 skipped / ⬜ no entry square per habit per day. Goes straight to the user — don\'t repeat it.',
     parameters: Type.Object({
-      dates: Type.Array(Type.String({ description: 'YYYY-MM-DD in the user timezone' }), { minItems: 1, maxItems: 31 }),
+      dates: Type.Array(Type.String({ description: 'Each day IN THE USER\'S OWN WORDS ("yesterday", "monday", "4th oct") — never convert to a date yourself' }), { minItems: 1, maxItems: 31 }),
       habit: Type.Optional(Type.String({ description: 'Habit name or id; omit for all habits' })),
     }),
     execute: async (_id, p) => {
       // 🧹 valid, unique, sorted, and not in the future
-      const dates = [...new Set(p.dates.filter((d: string) => /^\d{4}-\d{2}-\d{2}$/.test(d) && d <= user.today))].sort();
-      if (!dates.length) throw new Error(`No valid past dates given (today is ${user.today}).`);
+      const dates = [...new Set(p.dates.map((d: string) => resolveDayWords(d, user.today)).filter((d): d is string => !!d && d <= user.today))].sort();
+      if (!dates.length) throw new Error(`Couldn't work out any past day from ${JSON.stringify(p.dates)} — ask the user which date they mean.`);
       let habits = await store.listHabits(user.userId);
       if (p.habit && !ALL_HABITS_WORDS.test(p.habit.trim())) habits = [await resolveHabitOrThrow(user, p.habit)];
       if (!habits.length) { await user.sayText('You have no habits yet 🌱 Send *add habit <name>* to start.'); return text('User has no habits.', true); }
@@ -767,7 +767,12 @@ const describeHabitState = async (user: UserContext): Promise<string> => {
   // NIGHT's chat as today and told the user "already done" without marking. 🙈
   const lines = habits.map((h) => `  - ${h.id}: ${h.name} — ${user.today}: ${statuses.get(h.id) ?? 'NOT marked'}`);
   const unmarked = habits.filter((h) => !statuses.has(h.id)).length;
-  return [`- today is ${user.today}, yesterday was ${addDays(user.today, -1)} — dates mentioned in older chat messages are stale`,
+  // 🗓️ A tiny calendar so the model READS dates instead of computing them.
+  const calendar = Array.from({ length: 8 }, (_, i) => {
+    const d = addDays(user.today, -i);
+    return `${shortDay(d)}${i === 0 ? ' = today' : i === 1 ? ' = yesterday' : ''}`;
+  }).join(' · ');
+  return [`- calendar (newest first): ${calendar} — dates mentioned in older chat messages are stale`,
     `- habits on ${user.today} (${habits.length}, ${unmarked} not marked yet) — this live list is the ONLY truth about today:`, ...lines].join('\n');
 };
 
@@ -779,7 +784,7 @@ export const habitsSkill: Skill = {
     '- The "User state" section already lists their habits + today\'s status — use it instead of calling list_habits.',
     '- When the user says they did (or skipped) something matching a habit, ALWAYS call mark_habit — even if you think it is already marked (re-marking is harmless). Never reply "already done" without calling it.',
     '- Earlier messages in this chat may be from previous days: "for today" in them meant THAT day. Today\'s status comes only from the live habits list above.',
-    '- Marking for "today" / "yesterday" → pass date "today" / "yesterday" literally (the tool resolves it). Other days ("Monday", "20th") → YYYY-MM-DD from today\'s date above. Only the last 7 days can be changed. Confirm using the date the tool returns.',
+    '- Dates: pass the day to tools in the user\'s OWN words ("yesterday", "day before yesterday", "monday", "last friday", "20th oct") — the tools work out the real date. Never do date math yourself and never reuse a date from an earlier message. Only the last 7 days can be changed; future days can\'t be marked. Confirm using the exact date the tool returns.',
     '- Showing/listing habits → send_habit_list (one plain message). Buttons to mark them → send_habit_checklist, only when they ask to mark / want the checklist.',
     '- Weekly recap / points / rank / leaderboard / "how did my week go" → send_weekly_recap. A recap also goes out by itself every Sunday afternoon.',
     '- Stats/status/streak/tracker for SPECIFIC day(s) ("for 4th Oct", "4th and 5th October", "yesterday") → send_habit_days with those dates (one call, all dates).',
