@@ -1,6 +1,6 @@
 // ============================================================================
 // 📣 Yesterday's shoutouts — the "who won / who's back / who's warming up" line
-// that rides on top of the 21:00 daily reminder (template AND free-form).
+// that rides on top of the 19:50 daily reminder (template AND free-form).
 //
 // Everyone with a habit lands in exactly ONE bucket for yesterday:
 //   🏆 winners    → marked ANYTHING yesterday (✅ done or ❌ skip — showing up wins)

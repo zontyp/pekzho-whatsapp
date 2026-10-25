@@ -26,7 +26,7 @@ import { buildLeaderboard, recapTeaser, renderWeeklyRecap } from './recap.ts';
 import { buildShoutouts, shoutoutBlock, shoutoutLine, stampSpotlight } from './shoutouts.ts';
 import { renderAllHabitsPng, renderHabitCalendarPng, renderHabitWeekStripPng, renderWeekGridPng } from './grid-image.ts';
 
-const REMINDER_TIME = process.env.HABIT_REMINDER_TIME ?? '21:00';
+const REMINDER_TIME = process.env.HABIT_REMINDER_TIME ?? '19:50';
 const MAX_CHECKLIST_HABITS = 10; // 🧯 one WA message per habit — don't flood the chat
 
 export const HELP_TEXT = [
@@ -518,9 +518,8 @@ const PAYLOAD_STREAKS   = 'habits:streaks';     // "Show my streaks"
 const PAYLOAD_RECAP     = 'habits:recap';       // weekly recap template's "See my recap"
 
 // ✂️ {{2}} must be one line and not huge: "Daily Exercise, Read 10 pages, +3 more"
-// 🙌 Marked anything for today within this many hours before the reminder? Then
-// skip them — at 21:00 that means "since about noon".
-const SKIP_IF_MARKED_WITHIN_HOURS = Number(process.env.HABIT_REMINDER_SKIP_IF_MARKED_HOURS ?? 9);
+// (The old "marked in the last 9 hours → skip" rule was dropped 2026-10-26 —
+//  everyone gets the evening reminder now, shoutouts and all.)
 
 // 📣 The free-form reminder's opening line. The default works any day; the operator
 // can swap in a special one from .env (no code change), e.g. a Thursday pep talk:
@@ -552,16 +551,12 @@ const sendDailyReminders = async () => {
   const today = localDate();
   const { rows } = await db.query(
     `SELECT u.user_id, u.display_name, u.template_reminder_blocked,
-            (u.last_inbound_at > now() - interval '23 hours 50 minutes') AS in_window,
-            -- 🙌 already marked something for TODAY in the last few hours → no nudge needed
-            EXISTS (SELECT 1 FROM habit_logs l JOIN habits h ON h.id = l.habit_id
-                     WHERE h.user_id = u.user_id AND l.log_date = $1
-                       AND l.created_at > now() - make_interval(hours => $3)) AS marked_recently
+            (u.last_inbound_at > now() - interval '23 hours 50 minutes') AS in_window
      FROM users u
      WHERE EXISTS (SELECT 1 FROM habits h WHERE h.user_id = u.user_id)
        AND NOT u.reminders_opt_out
        AND (u.last_reminded_on IS NULL OR u.last_reminded_on < $1)
-       AND ($2::text IS NULL OR u.user_id LIKE $2 || '%')`, [today, DRY_RUN ? DRY_RUN_TEST_USER_PREFIX : null, SKIP_IF_MARKED_WITHIN_HOURS]);
+       AND ($2::text IS NULL OR u.user_id LIKE $2 || '%')`, [today, DRY_RUN ? DRY_RUN_TEST_USER_PREFIX : null]);
   if (!rows.length) { console.log('⏰ daily habit reminders: nobody due'); return; }
 
   // 💸 Outside the window = a PAID template (~₹1). Since 2026-10-16 it goes to
@@ -569,7 +564,10 @@ const sendDailyReminders = async () => {
   // users) — the old per-user hand switch (users.template_reminder_on) flipped
   // itself off on every reply, so exactly the most engaged users lost their
   // reminder the first evening they forgot to mark. The column stays, unused.
-  const wantsTemplate = (r: any) => !r.in_window && !r.template_reminder_blocked && !r.marked_recently;
+  // 📜 Since 2026-10-26 the template goes out EVEN inside the 24h window
+  // (operator's call: same shoutout card for everyone). Only template-blocked
+  // users (or a not-yet-approved template) fall back to the free-form checklist.
+  const wantsTemplate = (r: any) => !r.template_reminder_blocked;
 
   // ✅ Ask Meta once per run whether the template is usable yet (PENDING → skip).
   //    Shoutout template preferred; the plain one is the fallback while it's pending.
@@ -602,22 +600,21 @@ const sendDailyReminders = async () => {
     console.error(`📣 shoutouts failed, reminders go out without them: ${e.message}`);
   }
 
-  let freeForm = 0, viaTemplate = 0, skipped = 0, blocked = 0, alreadyMarked = 0, failed = 0;
+  let freeForm = 0, viaTemplate = 0, skipped = 0, blocked = 0, failed = 0;
   for (const r of rows) {
-    if (r.marked_recently) { alreadyMarked++; continue; } // 🙌 they're on it today — don't nag (or pay for a template)
     if (!r.in_window && r.template_reminder_blocked) { blocked++; continue; } // 🚫 operator blocked the paid template for this user
     if (!r.in_window && !templateReady) { skipped++; continue; } // 💤 retry tomorrow, don't stamp
     // 📝 stamp first, so a crash mid-loop can't double-remind anyone
     await db.query('UPDATE users SET last_reminded_on = $2 WHERE user_id = $1', [r.user_id, today]);
     const user = userContextFor(r.user_id, r.display_name);
     try {
-      if (r.in_window) {
-        // 🟢 inside 24h → the full tappable checklist, free-form
+      if (!(wantsTemplate(r) && templateReady)) {
+        // 🟢 template-blocked (or template not approved yet) but inside 24h → free-form checklist
         const block = shoutouts && shoutoutBlock(shoutouts);
         await sendHabitChecklist(user, (block ? `${block}\n\n` : '') + reminderHeaderFor(r.display_name, today));
         freeForm++;
       } else {
-        // 📜 outside 24h → the template; a tap on it re-opens the window
+        // 📜 everyone else → the template; a tap on it re-opens the window
         const names = (await store.listHabits(r.user_id)).map((h) => h.name);
         const firstName = greetingName(r.display_name) ?? 'there';
         if (shoutoutReady && shoutouts) {
@@ -632,13 +629,13 @@ const sendDailyReminders = async () => {
       console.error(`⏰ reminder to ${r.user_id} failed: ${e.message}`);
     }
   }
-  console.log(`⏰ daily habit reminders: free_form=${freeForm} template=${viaTemplate} skipped_template_not_ready=${skipped} skipped_template_blocked=${blocked} skipped_already_marked=${alreadyMarked} failed=${failed}`);
+  console.log(`⏰ daily habit reminders: free_form=${freeForm} template=${viaTemplate} skipped_template_not_ready=${skipped} skipped_template_blocked=${blocked} failed=${failed}`);
 };
 
 // --------------------------------------------------------------------------
 // 🌱 First-habit nudge — for users who joined but never added a habit (so the
-// 21:00 reminder skips them). One-shot, operator-scheduled via
-// users.first_habit_nudge_on; rides along with the 21:00 run. In-window → free
+// 19:50 reminder skips them). One-shot, operator-scheduled via
+// users.first_habit_nudge_on; rides along with the 19:50 run. In-window → free
 // starter buttons; outside → the `habit_first_nudge` template ({{1}} name),
 // whose two quick replies are the same add:/addhabit ids as the welcome.
 // --------------------------------------------------------------------------
