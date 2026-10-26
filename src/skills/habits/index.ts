@@ -23,7 +23,7 @@ import type { InboundTurn, Skill, UserContext } from '../types.ts';
 import * as store from './store.ts';
 import { habitNumbers, renderAllStatsCard, renderDaysCard, renderStatsCard } from './stats.ts';
 import { buildLeaderboard, recapTeaser, renderWeeklyRecap } from './recap.ts';
-import { buildShoutouts, shoutoutBlock, shoutoutLine, stampSpotlight } from './shoutouts.ts';
+import { buildShoutouts, shoutoutLine, stampSpotlight } from './shoutouts.ts';
 import { renderAllHabitsPng, renderHabitCalendarPng, renderHabitWeekStripPng, renderWeekGridPng } from './grid-image.ts';
 
 const REMINDER_TIME = process.env.HABIT_REMINDER_TIME ?? '19:50';
@@ -521,21 +521,17 @@ const PAYLOAD_RECAP     = 'habits:recap';       // weekly recap template's "See 
 // (The old "marked in the last 9 hours → skip" rule was dropped 2026-10-26 —
 //  everyone gets the evening reminder now, shoutouts and all.)
 
-// 📣 The free-form reminder's opening line. The default works any day; the operator
-// can swap in a special one from .env (no code change), e.g. a Thursday pep talk:
-//   HABIT_REMINDER_HEADER="Hey {name}, Thursday EOD…"   ({name} → greetingName, or "there")
-//   HABIT_REMINDER_HEADER_ON=2026-10-08                  (optional: ONLY that local date —
-//                                                         so "Thursday" never goes out on a Friday)
-// Only the free-form checklist uses it — the template's wording is locked by Meta's approval.
-const DEFAULT_REMINDER_HEADER = '⏰ Evening check-in! How did your habits go today? 👇';
-const STOP_FOOTER = '_(reply STOP to turn off reminders)_';
-const reminderHeaderFor = (displayName: string | null | undefined, today: string): string => {
-  const custom = process.env.HABIT_REMINDER_HEADER?.trim();
-  const onlyOn = process.env.HABIT_REMINDER_HEADER_ON?.trim();
-  const useCustom = custom && (!onlyOn || onlyOn === today);
-  const header = useCustom ? custom.replaceAll('{name}', greetingName(displayName) ?? 'there') : DEFAULT_REMINDER_HEADER;
-  return `${header}\n${STOP_FOOTER}`;
-};
+// 🪞 Word-for-word copy of habit_daily_shoutout (or habit_checklist_reminder when
+// there are no shoutouts) for users we may message freely. Keep in sync with
+// the Meta-approved wording; the template's footer becomes an italic last line.
+const reminderLookalike = (firstName: string, shoutout: string | undefined, habitList: string): string => [
+  `Hi ${firstName}, time for your daily habit check-in ⏰`,
+  ...(shoutout ? ['', `Yesterday on Pekzho: ${shoutout}`, ''] : []),
+  `Today's habits: ${habitList}`,
+  'Tap below to mark them done or skipped.',
+  '',
+  '_Reply STOP to turn off reminders_',
+].join('\n');
 
 const habitListParam = (names: string[], maxChars = 180): string => {
   const shown: string[] = [];
@@ -564,10 +560,10 @@ const sendDailyReminders = async () => {
   // users) — the old per-user hand switch (users.template_reminder_on) flipped
   // itself off on every reply, so exactly the most engaged users lost their
   // reminder the first evening they forgot to mark. The column stays, unused.
-  // 📜 Since 2026-10-26 the template goes out EVEN inside the 24h window
-  // (operator's call: same shoutout card for everyone). Only template-blocked
-  // users (or a not-yet-approved template) fall back to the free-form checklist.
-  const wantsTemplate = (r: any) => !r.template_reminder_blocked;
+  // 🪞 Inside the 24h window → a free-form COPY of the template (same words, same
+  // two buttons). Free, and Meta's 131049 marketing cap can't touch it — which
+  // it did to active users on 25 Oct. Only out-of-window users get the real template.
+  const wantsTemplate = (r: any) => !r.in_window && !r.template_reminder_blocked;
 
   // ✅ Ask Meta once per run whether the template is usable yet (PENDING → skip).
   //    Shoutout template preferred; the plain one is the fallback while it's pending.
@@ -608,15 +604,17 @@ const sendDailyReminders = async () => {
     await db.query('UPDATE users SET last_reminded_on = $2 WHERE user_id = $1', [r.user_id, today]);
     const user = userContextFor(r.user_id, r.display_name);
     try {
-      if (!(wantsTemplate(r) && templateReady)) {
-        // 🟢 template-blocked (or template not approved yet) but inside 24h → free-form checklist
-        const block = shoutouts && shoutoutBlock(shoutouts);
-        await sendHabitChecklist(user, (block ? `${block}\n\n` : '') + reminderHeaderFor(r.display_name, today));
+      const names = (await store.listHabits(r.user_id)).map((h) => h.name);
+      const firstName = greetingName(r.display_name) ?? 'there';
+      if (r.in_window) {
+        // 🟢 inside 24h → the template's twin, sent as a normal (free) message
+        await user.sayWithButtons(reminderLookalike(firstName, shoutouts && shoutoutLine(shoutouts), habitListParam(names)), [
+          { id: PAYLOAD_CHECKLIST, title: "Mark today's habits" },
+          { id: PAYLOAD_STREAKS, title: 'Show my streaks' },
+        ]);
         freeForm++;
       } else {
-        // 📜 everyone else → the template; a tap on it re-opens the window
-        const names = (await store.listHabits(r.user_id)).map((h) => h.name);
-        const firstName = greetingName(r.display_name) ?? 'there';
+        // 📜 outside 24h → the real template; a tap on it re-opens the window
         if (shoutoutReady && shoutouts) {
           await user.sayTemplate(SHOUTOUT_TEMPLATE, REMINDER_TEMPLATE_LANG, [firstName, shoutoutLine(shoutouts), habitListParam(names)], [PAYLOAD_CHECKLIST, PAYLOAD_STREAKS]);
         } else {
