@@ -144,10 +144,17 @@ const LOGIN_PAGE_HTML = `<!doctype html>
   @media (prefers-color-scheme: light) { :root { --bg:#f6f7f9; --card:#fff; --text:#14161b; --muted:#5b6170; } }
   * { box-sizing:border-box; } html,body { margin:0; height:100%; background:var(--bg); color:var(--text);
     font:15px/1.4 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif; }
-  .wrap { display:flex; flex-direction:column; height:100dvh; }
+  /* 🙈 .msg sets display:flex, which beat the hidden attribute — so the
+     "Opening Razorpay…" box never left and squashed the live view into the
+     top HALF of the screen. hidden must always win. */
+  [hidden] { display:none !important; }
+  .wrap { display:flex; flex-direction:column; height:100vh; height:100dvh; }
   header { padding:10px 16px; background:var(--card); border-bottom:1px solid #0002; }
-  header b { display:block; } header small { color:var(--muted); }
-  iframe { flex:1; width:100%; border:0; background:#fff; }
+  header > b { display:block; } header small { color:var(--muted); }
+  /* 📱 The remote Chrome is phone-shaped (412×860). Phones: fill the screen.
+     Desktop: a centred phone-width column instead of a stretched-out stream. */
+  iframe { flex:1; min-height:0; width:100%; max-width:480px; align-self:center; border:0; background:#fff; }
+  @media (min-width: 600px) { iframe { margin:12px 0; border-radius:12px; box-shadow:0 4px 24px #0004; } }
   .msg { flex:1; display:flex; flex-direction:column; align-items:center; justify-content:center; text-align:center; padding:24px; gap:8px; }
   .msg .big { font-size:48px; }
 </style></head><body><div class="wrap">
