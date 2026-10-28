@@ -27,7 +27,7 @@ const LINK_MINUTES = 10;
 const WATCH_EVERY_MS = 2500;
 
 type LinkState = 'waiting' | 'linked' | 'expired' | 'failed';
-interface LoginLink { userId: string; state: LinkState; liveViewUrl: string; expiresAt: number }
+interface LoginLink { userId: string; state: LinkState; tabId: string; liveViewUrl: string; expiresAt: number }
 
 const linksByToken = new Map<string, LoginLink>();
 const openLinkByUser = new Map<string, string>(); // userId → token, while 'waiting'
@@ -62,7 +62,7 @@ export const startLoginLink = async (userId: string, browserProfileId: string, c
     if (!firstTab) throw new Error('no live-view tab');
 
     const token = randomBytes(18).toString('base64url');
-    const link: LoginLink = { userId, state: 'waiting', liveViewUrl: firstTab.liveViewUrl, expiresAt: Date.now() + LINK_MINUTES * 60_000 };
+    const link: LoginLink = { userId, state: 'waiting', tabId: firstTab.id, liveViewUrl: firstTab.liveViewUrl, expiresAt: Date.now() + LINK_MINUTES * 60_000 };
     linksByToken.set(token, link);
     openLinkByUser.set(userId, token);
     console.log(`🔗 login link opened for ${userId} (browser ${live.id})`);
@@ -79,7 +79,9 @@ export const startLoginLink = async (userId: string, browserProfileId: string, c
             break;
           }
           const tab = pickTabToShow(await liveViewTabs(live.id).catch(() => []));
-          if (tab) link.liveViewUrl = tab.liveViewUrl;
+          // 🪟 swap ONLY when a different tab should show — the URL alone changes
+          // every call, and swapping on that made the page blink every 2.5s
+          if (tab && tab.id !== link.tabId) { link.tabId = tab.id; link.liveViewUrl = tab.liveViewUrl; }
           await new Promise((r) => setTimeout(r, WATCH_EVERY_MS));
         }
         if (!connected.isConnected() && finalState !== 'linked') finalState = 'failed';

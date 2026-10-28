@@ -74,8 +74,10 @@ export const releaseBrowser = async (browserId: string): Promise<void> => {
 
 // 📺 One live-view link per open tab. navbar=false hides Browserbase's own
 // tab strip, so on a phone it's just the website.
-export interface LiveTab { url: string; title: string; liveViewUrl: string }
+// ⚠️ liveViewUrl is DIFFERENT on every call (fresh wss token each time) even for
+// the same tab — compare tabs by `id`, never by URL, or the view reloads forever.
+export interface LiveTab { id: string; url: string; title: string; liveViewUrl: string }
 export const liveViewTabs = async (browserId: string): Promise<LiveTab[]> => {
   const d = await callBrowserbase(`/sessions/${browserId}/debug`);
-  return (d.pages ?? []).map((p: any) => ({ url: p.url ?? '', title: p.title ?? '', liveViewUrl: `${p.debuggerFullscreenUrl}&navbar=false` }));
+  return (d.pages ?? []).map((p: any) => ({ id: p.id ?? '', url: p.url ?? '', title: p.title ?? '', liveViewUrl: `${p.debuggerFullscreenUrl}&navbar=false` }));
 };
